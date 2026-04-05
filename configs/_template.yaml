@@ -1,0 +1,29 @@
+# AutoResearch configuration template.
+# Copy this file and fill in your research topic.
+
+research:
+  topic: "Your research question here"
+  goal: >
+    What the final output should look like and who it is for.
+
+  dimensions:
+    - "First dimension to explore"
+    - "Second dimension to explore"
+    # Add as many as needed. The agent will also discover new ones.
+
+  scoring:
+    min_dimensions_per_iteration: 1
+    target_dimensions_total: 10
+    evidence_types:
+      - comparison_table
+      - pricing_data
+      - code_example
+      - architecture_diagram_description
+      - trade_off_analysis
+
+  execution:
+    max_iterations: 0       # 0 = infinite
+    compress_every: 5       # compress knowledge base every N iterations
+    allowed_tools: "WebSearch,WebFetch,Read,Bash,Glob,Grep"
+    max_turns: 10           # max claude agent turns per research call
+    timeout_seconds: 300    # timeout per claude invocation

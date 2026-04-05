@@ -1,0 +1,35 @@
+research:
+  topic: "Compare AWS API Gateway options for enterprise REST and WebSocket APIs"
+  goal: >
+    Produce a comprehensive, architect-level comparison of AWS API Gateway
+    variants (REST API, HTTP API, WebSocket API) with clear recommendations,
+    pricing models, and trade-off analysis suitable for enterprise decision-making.
+
+  dimensions:
+    - "REST API vs HTTP API: feature matrix, pricing, and performance differences"
+    - "WebSocket API: capabilities, connection limits, and scaling patterns"
+    - "Authentication and authorization: IAM, Cognito, Lambda authorizers, JWT"
+    - "Rate limiting, throttling, and usage plans for multi-tenant SaaS"
+    - "Integration patterns: Lambda proxy, VPC link, HTTP proxy, service integrations"
+    - "Observability: CloudWatch metrics, X-Ray tracing, access logging, CloudTrail"
+    - "Cost modeling: per-request pricing, data transfer, caching, and free tier"
+    - "Deployment: stages, canary releases, versioning, CI/CD integration"
+    - "Custom domains, TLS certificates, and edge-optimized vs regional endpoints"
+    - "Hard limits and quotas that constrain architecture decisions"
+
+  scoring:
+    min_dimensions_per_iteration: 1
+    target_dimensions_total: 10
+    evidence_types:
+      - comparison_table
+      - pricing_data
+      - code_example
+      - architecture_diagram_description
+      - trade_off_analysis
+
+  execution:
+    max_iterations: 0       # 0 = infinite (never stop)
+    compress_every: 5
+    allowed_tools: "WebSearch,WebFetch,Read,Bash,Glob,Grep"
+    max_turns: 10
+    timeout_seconds: 300

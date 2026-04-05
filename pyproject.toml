@@ -1,0 +1,11 @@
+[project]
+name = "autoresearch-claude"
+version = "0.1.0"
+description = "Autonomous research framework powered by Claude Code agents"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+autoresearch = "src.cli:main"
