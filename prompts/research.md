@@ -18,6 +18,13 @@ architect making real infrastructure decisions.
 
 {knowledge_summary}
 
+## Constraints
+
+- Do NOT attempt to authenticate to AWS or any cloud provider.
+- Do NOT run AWS CLI commands or access real AWS accounts.
+- For any code examples, use LocalStack with docker-compose for local testing.
+- Research must be based on web search, documentation, and public sources only.
+
 ## Instructions
 
 1. Use web search to find current, authoritative information.

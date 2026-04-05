@@ -28,7 +28,7 @@ class ExecutionConfig:
     compress_every: int = 5
     allowed_tools: str = "WebSearch,WebFetch,Read,Bash,Glob,Grep"
     max_turns: int = 10
-    timeout_seconds: int = 300
+    timeout_seconds: int = 600
 
 
 @dataclass(frozen=True)

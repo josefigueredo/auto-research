@@ -61,13 +61,17 @@ def call_claude(
 
     log.debug("Claude CLI: %s", " ".join(cmd[:6]) + " ...")
 
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        encoding="utf-8",
-    )
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            encoding="utf-8",
+        )
+    except subprocess.TimeoutExpired:
+        log.warning("Claude CLI timed out after %ds.", timeout)
+        return ClaudeResponse(text="", cost_usd=0.0, is_error=True)
 
     if result.returncode != 0:
         stderr = result.stderr.strip()
@@ -138,6 +142,9 @@ class AutoResearcher:
         self.explored_dimensions: list[str] = []
         self.total_cost = 0.0
         self.results: list[dict[str, str]] = []
+        self._dimension_attempts: dict[str, int] = {}
+
+    MAX_ATTEMPTS_PER_DIMENSION = 3
 
     # -- Public API --------------------------------------------------------
 
@@ -193,12 +200,23 @@ class AutoResearcher:
                 reader = csv.DictReader(f, delimiter="\t")
                 for row in reader:
                     self.results.append(dict(row))
-                    if row.get("status") == "keep":
+                    dim = row.get("dimension", "")
+                    status = row.get("status", "")
+
+                    # Track attempts per dimension
+                    if dim:
+                        self._dimension_attempts[dim] = self._dimension_attempts.get(dim, 0) + 1
+
+                    if status == "keep":
                         score = float(row.get("total_score", 0))
                         if score > self.best_score:
                             self.best_score = score
-                        dim = row.get("dimension", "")
                         if dim and dim not in self.explored_dimensions:
+                            self.explored_dimensions.append(dim)
+
+                    # Mark exhausted dimensions as explored so we move on
+                    if dim and self._dimension_attempts.get(dim, 0) >= self.MAX_ATTEMPTS_PER_DIMENSION:
+                        if dim not in self.explored_dimensions:
                             self.explored_dimensions.append(dim)
 
         # Reload knowledge base
@@ -224,13 +242,18 @@ class AutoResearcher:
         dimension = hypothesis.get("dimension", "unknown")
         questions = hypothesis.get("questions", [])
         approach = hypothesis.get("approach", "")
-        log.info("Dimension: %s", dimension)
+
+        # Track attempts per dimension
+        self._dimension_attempts[dimension] = self._dimension_attempts.get(dimension, 0) + 1
+        attempts = self._dimension_attempts[dimension]
+        log.info("Dimension: %s (attempt %d/%d)", dimension, attempts, self.MAX_ATTEMPTS_PER_DIMENSION)
 
         # 2. Execute research
         findings = self._execute_research(dimension, questions, approach)
         if not findings:
             log.warning("Research execution returned empty, logging crash.")
             self._log_result(dimension, IterationScore(), "", status="crash")
+            self._maybe_exhaust_dimension(dimension)
             return
 
         # 3. Score
@@ -251,6 +274,7 @@ class AutoResearcher:
             log.info("KEEP — merged into knowledge base.")
         else:
             log.info("DISCARD — findings saved but not merged.")
+            self._maybe_exhaust_dimension(dimension)
 
         # 5. Save iteration file + log
         self._save_iteration(dimension, findings, score, kept)
@@ -399,6 +423,17 @@ class AutoResearcher:
                 d for d in self.config.dimensions
             ]:
                 log.info("New dimension discovered: %s", gap)
+
+    def _maybe_exhaust_dimension(self, dimension: str) -> None:
+        """Mark a dimension as explored if max attempts reached."""
+        if self._dimension_attempts.get(dimension, 0) >= self.MAX_ATTEMPTS_PER_DIMENSION:
+            if dimension not in self.explored_dimensions:
+                self.explored_dimensions.append(dimension)
+                log.info(
+                    "Dimension exhausted after %d attempts, moving on: %s",
+                    self.MAX_ATTEMPTS_PER_DIMENSION,
+                    dimension,
+                )
 
     # -- Phase 5: Log & Save -----------------------------------------------
 
