@@ -28,6 +28,50 @@ PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 HEURISTIC_WEIGHT = 0.4
 JUDGE_WEIGHT = 0.6
 KB_MAX_WORDS = 4000
+RATE_LIMIT_BACKOFF_SECONDS = 120  # wait 2 min when rate limited
+RATE_LIMIT_WARN_THRESHOLD = 0.80  # slow down above 80% utilization
+RATE_LIMIT_COOLDOWN_SECONDS = 30  # pause between iterations when nearing limit
+
+
+# ---------------------------------------------------------------------------
+# Rate limit detection
+# ---------------------------------------------------------------------------
+
+def _check_rate_limit(stdout: str) -> int:
+    """Parse Claude CLI JSON output for rate limit events. Return seconds to wait."""
+    if not stdout:
+        return 0
+    try:
+        payload = json.loads(stdout)
+        events = payload if isinstance(payload, list) else [payload]
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            if event.get("type") == "rate_limit_event":
+                info = event.get("rate_limit_info", {})
+                utilization = info.get("utilization", 0)
+                if utilization >= 0.90:
+                    return RATE_LIMIT_BACKOFF_SECONDS
+                if utilization >= RATE_LIMIT_WARN_THRESHOLD:
+                    return RATE_LIMIT_COOLDOWN_SECONDS
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return 0
+
+
+def _extract_rate_limit_utilization(stdout: str) -> float:
+    """Extract rate limit utilization from response for throttling."""
+    if not stdout:
+        return 0.0
+    try:
+        payload = json.loads(stdout)
+        events = payload if isinstance(payload, list) else [payload]
+        for event in events:
+            if isinstance(event, dict) and event.get("type") == "rate_limit_event":
+                return event.get("rate_limit_info", {}).get("utilization", 0.0)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +119,13 @@ def call_claude(
 
     if result.returncode != 0:
         stderr = result.stderr.strip()
-        log.error("Claude CLI failed (rc=%d): %s", result.returncode, stderr)
+        # Check for rate limiting in stdout (JSON may still have events)
+        rate_wait = _check_rate_limit(result.stdout)
+        if rate_wait > 0:
+            log.warning("Rate limited. Waiting %d seconds before next call...", rate_wait)
+            time.sleep(rate_wait)
+        else:
+            log.error("Claude CLI failed (rc=%d): %s", result.returncode, stderr)
         return ClaudeResponse(text="", cost_usd=0.0, is_error=True)
 
     try:
@@ -99,6 +149,13 @@ def call_claude(
             text = event.get("result", "")
             cost = event.get("total_cost_usd", event.get("cost_usd", 0.0))
             break
+
+    # Proactive throttling on successful responses
+    utilization = _extract_rate_limit_utilization(result.stdout)
+    if utilization >= RATE_LIMIT_WARN_THRESHOLD:
+        wait = RATE_LIMIT_BACKOFF_SECONDS if utilization >= 0.90 else RATE_LIMIT_COOLDOWN_SECONDS
+        log.info("Rate limit at %.0f%%, cooling down %ds...", utilization * 100, wait)
+        time.sleep(wait)
 
     return ClaudeResponse(text=text, cost_usd=cost, is_error=False)
 
