@@ -32,4 +32,5 @@ research:
     compress_every: 5
     allowed_tools: "WebSearch,WebFetch,Read,Bash,Glob,Grep"
     max_turns: 10
+    model: sonnet                # "sonnet", "opus", or "haiku"
     timeout_seconds: 600

@@ -88,6 +88,7 @@ class ClaudeResponse:
 def call_claude(
     prompt: str,
     *,
+    model: str = "sonnet",
     allowed_tools: str = "",
     max_turns: int = 10,
     timeout: int = 300,
@@ -96,6 +97,8 @@ def call_claude(
     """Invoke Claude Code CLI in headless mode and return the result."""
     cmd: list[str] = ["claude", "-p", prompt, "--output-format", "json"]
 
+    if model:
+        cmd.extend(["--model", model])
     if allowed_tools:
         cmd.extend(["--allowedTools", allowed_tools])
     if max_turns:
@@ -364,6 +367,7 @@ class AutoResearcher:
 
         resp = call_claude(
             prompt,
+            model=self.config.execution.model,
             max_turns=3,
             timeout=self.config.execution.timeout_seconds,
         )
@@ -406,6 +410,7 @@ class AutoResearcher:
 
         resp = call_claude(
             prompt,
+            model=self.config.execution.model,
             allowed_tools=self.config.execution.allowed_tools,
             max_turns=self.config.execution.max_turns,
             timeout=self.config.execution.timeout_seconds,
@@ -440,6 +445,7 @@ class AutoResearcher:
 
             resp = call_claude(
                 prompt,
+                model=self.config.execution.model,
                 max_turns=3,
                 timeout=self.config.execution.timeout_seconds,
             )
@@ -575,7 +581,7 @@ class AutoResearcher:
             f"{self.knowledge_base}"
         )
 
-        resp = call_claude(prompt, max_turns=3, timeout=120)
+        resp = call_claude(prompt, model=self.config.execution.model, max_turns=3, timeout=120)
         self.total_cost += resp.cost_usd
 
         if not resp.is_error and resp.text and len(resp.text) > 200:
@@ -602,6 +608,7 @@ class AutoResearcher:
         log.info("Generating final synthesis report...")
         resp = call_claude(
             prompt,
+            model=self.config.execution.model,
             max_turns=5,
             timeout=self.config.execution.timeout_seconds,
         )

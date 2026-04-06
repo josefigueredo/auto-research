@@ -29,6 +29,7 @@ class ExecutionConfig:
     allowed_tools: str = "WebSearch,WebFetch,Read,Bash,Glob,Grep"
     max_turns: int = 10
     timeout_seconds: int = 600
+    model: str = "sonnet"  # "sonnet", "opus", or "haiku"
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,8 @@ class ResearchConfig:
             compress_every=exec_raw.get("compress_every", 5),
             allowed_tools=exec_raw.get("allowed_tools", ExecutionConfig.allowed_tools),
             max_turns=exec_raw.get("max_turns", 10),
-            timeout_seconds=exec_raw.get("timeout_seconds", 300),
+            timeout_seconds=exec_raw.get("timeout_seconds", 600),
+            model=exec_raw.get("model", "sonnet"),
         )
 
         return cls(
