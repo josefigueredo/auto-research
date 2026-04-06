@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import subprocess
 import tempfile
 import time
@@ -151,11 +152,22 @@ class Backend(ABC):
         """Hook called after a successful invocation for provider-specific
         side effects (e.g. rate limit backoff).  Default is a no-op."""
 
+    def _resolve_executable(self) -> str | None:
+        """Resolve the full path to the CLI executable.
+
+        Uses ``shutil.which`` to find ``.cmd``/``.bat`` shims on Windows
+        (common for npm-installed CLIs like codex and copilot).
+        """
+        return shutil.which(self.cli_executable())
+
     def check_available(self) -> bool:
         """Return ``True`` if the CLI is installed and responds."""
+        exe = self._resolve_executable()
+        if exe is None:
+            return False
         try:
             result = subprocess.run(
-                [self.cli_executable(), "--version"],
+                [exe, "--version"],
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -171,12 +183,16 @@ class Backend(ABC):
         subprocess execution, timeout, and error codes.
         """
         cmd = self.build_command(opts)
+        # Resolve the executable to its full path (handles .cmd/.bat shims on Windows)
+        exe = self._resolve_executable()
+        if exe and cmd and cmd[0] == self.cli_executable():
+            cmd[0] = exe
+
         stdin_input: str | None = None
 
         if self.prompt_mode() == PromptMode.STDIN:
             stdin_input = prompt
         else:
-            # Argument mode — use tempfile for very long prompts
             if len(prompt) > _ARG_PROMPT_LIMIT:
                 return self._invoke_via_tempfile(prompt, cmd, timeout)
             cmd.append(prompt)
@@ -368,6 +384,9 @@ class ClaudeBackend(Backend):
     def invoke(self, prompt: str, opts: CallOptions, timeout: int = 300) -> AgentResponse:
         """Claude-specific invoke that salvages results from budget-exceeded calls."""
         cmd = self.build_command(opts)
+        exe = self._resolve_executable()
+        if exe and cmd and cmd[0] == self.cli_executable():
+            cmd[0] = exe
 
         log.debug(
             "%s CLI: %s (prompt: %d chars)",
@@ -445,6 +464,9 @@ class ClaudeBackend(Backend):
 # Codex backend
 # ---------------------------------------------------------------------------
 
+_CLAUDE_SHORTNAMES = {"sonnet", "opus", "haiku"}
+
+
 class CodexBackend(Backend):
     """OpenAI Codex CLI backend.
 
@@ -462,7 +484,7 @@ class CodexBackend(Backend):
 
     def build_command(self, opts: CallOptions) -> list[str]:
         cmd = ["codex", "exec", "--json"]
-        if opts.model:
+        if opts.model and opts.model not in _CLAUDE_SHORTNAMES:
             cmd.extend(["--model", opts.model])
         if opts.allowed_tools:
             cmd.extend(["--sandbox", "workspace-write"])
@@ -496,7 +518,7 @@ class GeminiBackend(Backend):
 
     def build_command(self, opts: CallOptions) -> list[str]:
         cmd = ["gemini", "-p"]
-        if opts.model:
+        if opts.model and opts.model not in _CLAUDE_SHORTNAMES:
             cmd.extend(["--model", opts.model])
         cmd.extend(["--output-format", "json"])
         if opts.allowed_tools:
@@ -540,7 +562,7 @@ class CopilotBackend(Backend):
 
     def build_command(self, opts: CallOptions) -> list[str]:
         cmd = ["copilot", "-p"]
-        if opts.model:
+        if opts.model and opts.model not in _CLAUDE_SHORTNAMES:
             cmd.extend(["--model", opts.model])
         cmd.extend(["--output-format", "json", "--silent"])
         if opts.allowed_tools:
@@ -559,16 +581,20 @@ class CopilotBackend(Backend):
 # ---------------------------------------------------------------------------
 
 def _parse_jsonl_last_result(stdout: str, *, cost_key: str = "cost_usd") -> AgentResponse:
-    """Parse JSONL output, returning the last result event.
+    """Parse JSONL output, returning the last agent message or result.
 
-    Handles both newline-delimited JSON objects and single JSON objects.
+    Handles multiple JSONL formats:
+    - Codex: ``item.completed`` events with ``item.text``
+    - Generic: events with ``result``, ``response``, or ``message`` keys
+    - Single JSON objects
+
     Falls back to raw text if no structured data is found.
     """
     if not stdout.strip():
         return AgentResponse(text="", cost_usd=0.0, is_error=True)
 
     lines = stdout.strip().splitlines()
-    last_result = ""
+    last_text = ""
     cost = 0.0
 
     for line in reversed(lines):
@@ -577,16 +603,33 @@ def _parse_jsonl_last_result(stdout: str, *, cost_key: str = "cost_usd") -> Agen
             continue
         try:
             obj = json.loads(line)
-            if isinstance(obj, dict):
-                result = obj.get("result", obj.get("response", obj.get("message", "")))
-                if result:
-                    last_result = result
-                    cost = obj.get(cost_key, obj.get("total_cost_usd", 0.0))
+            if not isinstance(obj, dict):
+                continue
+
+            # Codex format: {"type": "item.completed", "item": {"text": "..."}}
+            item = obj.get("item")
+            if isinstance(item, dict) and item.get("type") == "agent_message":
+                text = item.get("text", "")
+                if text:
+                    last_text = text
                     break
+
+            # Codex usage event
+            if obj.get("type") == "turn.completed":
+                usage = obj.get("usage", {})
+                # Codex doesn't report cost directly
+                continue
+
+            # Generic: top-level result/response/message
+            text = obj.get("result", obj.get("response", obj.get("message", "")))
+            if text and obj.get("type") not in ("error", "turn.failed"):
+                last_text = text
+                cost = obj.get(cost_key, obj.get("total_cost_usd", 0.0))
+                break
         except json.JSONDecodeError:
             continue
 
-    if not last_result:
+    if not last_text:
         return AgentResponse(text=stdout.strip(), cost_usd=0.0, is_error=False)
 
-    return AgentResponse(text=last_result, cost_usd=cost, is_error=False)
+    return AgentResponse(text=last_text, cost_usd=cost, is_error=False)
