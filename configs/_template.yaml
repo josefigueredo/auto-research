@@ -26,5 +26,6 @@ research:
     compress_every: 5       # compress knowledge base every N iterations
     allowed_tools: "WebSearch,WebFetch,Read,Bash,Glob,Grep"
     max_turns: 10           # max claude agent turns per research call
-    model: sonnet               # "sonnet", "opus", or "haiku"
+    backend: claude             # "claude", "codex", "gemini", or "copilot"
+    model: sonnet               # model name (backend-specific)
     timeout_seconds: 600        # timeout per claude invocation

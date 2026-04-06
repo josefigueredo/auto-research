@@ -1,33 +1,19 @@
 """Entry point for the autoresearch-claude framework.
 
-Parses CLI arguments, validates the config, checks for the Claude CLI,
-and launches the research loop or synthesis.
+Parses CLI arguments, validates the config, checks for the selected
+backend CLI, and launches the research loop or synthesis.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
-import subprocess
 import sys
 from pathlib import Path
 
+from .backend import VALID_BACKENDS, get_backend
 from .config import ResearchConfig
 from .orchestrator import AutoResearcher
-
-
-def _check_claude_cli() -> bool:
-    """Return ``True`` if the ``claude`` CLI is installed and responds."""
-    try:
-        result = subprocess.run(
-            ["claude", "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -56,13 +42,19 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = argparse.ArgumentParser(
         prog="autoresearch",
-        description="Autonomous research loop powered by Claude Code agents.",
+        description="Autonomous research loop powered by AI coding agent CLIs.",
     )
     parser.add_argument(
         "--config",
         type=Path,
         required=True,
         help="Path to a research config YAML (see configs/_template.yaml).",
+    )
+    parser.add_argument(
+        "--backend",
+        choices=VALID_BACKENDS,
+        default=None,
+        help="CLI backend to use. Overrides the config file. Default: claude.",
     )
     parser.add_argument(
         "--output",
@@ -102,6 +94,10 @@ def main(argv: list[str] | None = None) -> int:
         log.error("Failed to load config: %s", exc)
         return 1
 
+    # Resolve backend (CLI flag overrides config file)
+    backend_name = args.backend or config.execution.backend
+    backend = get_backend(backend_name)
+
     # Resolve output directory
     output_dir: Path = args.output or Path("output") / config_path.stem
     output_dir = output_dir.resolve()
@@ -119,22 +115,24 @@ def main(argv: list[str] | None = None) -> int:
                     output_dir,
                 )
 
-    # Check claude CLI
-    if not _check_claude_cli():
+    # Check backend CLI is available
+    if not backend.check_available():
         log.error(
-            "Claude CLI not found or not responding. "
-            "Install it from https://claude.ai/download and ensure 'claude --version' works."
+            "%s CLI not found or not responding. "
+            "Ensure '%s --version' works from the terminal.",
+            backend.name,
+            backend.cli_executable(),
         )
         return 1
 
     # Run
-    researcher = AutoResearcher(config=config, output_dir=output_dir)
+    researcher = AutoResearcher(
+        config=config, backend=backend, output_dir=output_dir
+    )
 
     try:
         if args.synthesize:
             researcher.synthesize_only()
-        elif args.resume:
-            researcher.run()
         else:
             researcher.run()
     except Exception as exc:

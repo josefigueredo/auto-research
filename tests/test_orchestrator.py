@@ -1,4 +1,4 @@
-"""Tests for src.orchestrator — rate limiting, CLI interface, prompt rendering, AutoResearcher."""
+"""Tests for src.orchestrator — prompt rendering, AutoResearcher."""
 
 import csv
 import json
@@ -7,20 +7,44 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.backend import AgentResponse, Backend, CallOptions
 from src.config import ExecutionConfig, ResearchConfig, ScoringConfig
-from src.orchestrator import (
-    AutoResearcher,
-    ClaudeResponse,
-    _check_rate_limit,
-    _extract_rate_limit_utilization,
-    _render,
-    call_claude,
-)
+from src.orchestrator import AutoResearcher, _render
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+class FakeBackend(Backend):
+    """In-memory backend for testing (no subprocess calls)."""
+
+    name = "fake"
+
+    def cli_executable(self) -> str:
+        return "fake-cli"
+
+    def prompt_mode(self):
+        from src.backend import PromptMode
+        return PromptMode.STDIN
+
+    def build_command(self, opts):
+        return ["fake-cli", "-p", "-"]
+
+    def parse_response(self, stdout):
+        return AgentResponse(text=stdout, cost_usd=0.0, is_error=False)
+
+    def check_available(self) -> bool:
+        return True
+
+    def invoke(self, prompt, opts, timeout=300):
+        return AgentResponse(text="fake response", cost_usd=0.01, is_error=False)
+
+
+# Remove from registry to avoid polluting other tests
+if "fake" in Backend.__dict__.get("_REGISTRY", {}):
+    del Backend._REGISTRY["fake"]
+
 
 @pytest.fixture
 def research_config() -> ResearchConfig:
@@ -31,6 +55,7 @@ def research_config() -> ResearchConfig:
         scoring=ScoringConfig(),
         execution=ExecutionConfig(
             max_iterations=2,
+            backend="claude",
             model="sonnet",
             timeout_seconds=10,
             max_budget_per_call=0.10,
@@ -39,200 +64,17 @@ def research_config() -> ResearchConfig:
 
 
 @pytest.fixture
-def researcher(research_config, tmp_path) -> AutoResearcher:
-    return AutoResearcher(config=research_config, output_dir=tmp_path / "output")
+def fake_backend() -> FakeBackend:
+    return FakeBackend()
 
 
-def _make_cli_output(result_text="hello", cost=0.05, utilization=None):
-    """Build a mock Claude CLI JSON array output."""
-    events = [
-        {"type": "system", "subtype": "init"},
-        {"type": "result", "subtype": "success", "result": result_text,
-         "total_cost_usd": cost, "is_error": False},
-    ]
-    if utilization is not None:
-        events.insert(1, {
-            "type": "rate_limit_event",
-            "rate_limit_info": {"utilization": utilization, "status": "allowed"},
-        })
-    return json.dumps(events)
-
-
-# ---------------------------------------------------------------------------
-# _check_rate_limit
-# ---------------------------------------------------------------------------
-
-class TestCheckRateLimit:
-    def test_empty_string(self):
-        assert _check_rate_limit("") == 0
-
-    def test_no_rate_limit_event(self):
-        data = json.dumps([{"type": "result", "result": "ok"}])
-        assert _check_rate_limit(data) == 0
-
-    def test_low_utilization(self):
-        data = json.dumps([{
-            "type": "rate_limit_event",
-            "rate_limit_info": {"utilization": 0.5},
-        }])
-        assert _check_rate_limit(data) == 0
-
-    def test_warning_utilization(self):
-        data = json.dumps([{
-            "type": "rate_limit_event",
-            "rate_limit_info": {"utilization": 0.85},
-        }])
-        assert _check_rate_limit(data) == 30  # RATE_LIMIT_COOLDOWN_SECONDS
-
-    def test_high_utilization(self):
-        data = json.dumps([{
-            "type": "rate_limit_event",
-            "rate_limit_info": {"utilization": 0.95},
-        }])
-        assert _check_rate_limit(data) == 120  # RATE_LIMIT_BACKOFF_SECONDS
-
-    def test_invalid_json(self):
-        assert _check_rate_limit("not json") == 0
-
-    def test_dict_format(self):
-        data = json.dumps({
-            "type": "rate_limit_event",
-            "rate_limit_info": {"utilization": 0.92},
-        })
-        assert _check_rate_limit(data) == 120
-
-
-# ---------------------------------------------------------------------------
-# _extract_rate_limit_utilization
-# ---------------------------------------------------------------------------
-
-class TestExtractRateLimitUtilization:
-    def test_empty(self):
-        assert _extract_rate_limit_utilization("") == 0.0
-
-    def test_extracts_value(self):
-        data = json.dumps([{
-            "type": "rate_limit_event",
-            "rate_limit_info": {"utilization": 0.73},
-        }])
-        assert _extract_rate_limit_utilization(data) == 0.73
-
-    def test_no_event(self):
-        data = json.dumps([{"type": "result"}])
-        assert _extract_rate_limit_utilization(data) == 0.0
-
-    def test_invalid_json(self):
-        assert _extract_rate_limit_utilization("{bad") == 0.0
-
-
-# ---------------------------------------------------------------------------
-# ClaudeResponse
-# ---------------------------------------------------------------------------
-
-class TestClaudeResponse:
-    def test_frozen(self):
-        r = ClaudeResponse(text="hi", cost_usd=0.01, is_error=False)
-        with pytest.raises(AttributeError):
-            r.text = "changed"
-
-    def test_fields(self):
-        r = ClaudeResponse(text="result", cost_usd=1.5, is_error=True)
-        assert r.text == "result"
-        assert r.cost_usd == 1.5
-        assert r.is_error is True
-
-
-# ---------------------------------------------------------------------------
-# call_claude (mocked subprocess)
-# ---------------------------------------------------------------------------
-
-class TestCallClaude:
-    @patch("src.orchestrator.subprocess.run")
-    def test_successful_array_response(self, mock_run):
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=_make_cli_output("research findings", 0.12),
-            stderr="",
-        )
-        resp = call_claude("test prompt", model="sonnet", timeout=10)
-        assert resp.text == "research findings"
-        assert resp.cost_usd == 0.12
-        assert resp.is_error is False
-
-    @patch("src.orchestrator.subprocess.run")
-    def test_successful_dict_response(self, mock_run):
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=json.dumps({"result": "dict result", "cost_usd": 0.05, "is_error": False}),
-            stderr="",
-        )
-        resp = call_claude("test", timeout=10)
-        assert resp.text == "dict result"
-
-    @patch("src.orchestrator.subprocess.run")
-    def test_non_json_response(self, mock_run):
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout="plain text response",
-            stderr="",
-        )
-        resp = call_claude("test", timeout=10)
-        assert resp.text == "plain text response"
-        assert resp.is_error is False
-
-    @patch("src.orchestrator.subprocess.run")
-    def test_rc1_error(self, mock_run):
-        mock_run.return_value = MagicMock(
-            returncode=1,
-            stdout="",
-            stderr="some error",
-        )
-        resp = call_claude("test", timeout=10)
-        assert resp.is_error is True
-        assert resp.text == ""
-
-    @patch("src.orchestrator.subprocess.run")
-    def test_timeout_error(self, mock_run):
-        import subprocess
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=10)
-        resp = call_claude("test", timeout=10)
-        assert resp.is_error is True
-
-    @patch("src.orchestrator.subprocess.run")
-    def test_builds_correct_command(self, mock_run):
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=_make_cli_output(),
-            stderr="",
-        )
-        call_claude(
-            "prompt text",
-            model="opus",
-            allowed_tools="WebSearch,Read",
-            max_turns=5,
-            max_budget_usd=0.75,
-            timeout=30,
-        )
-        cmd = mock_run.call_args[0][0]
-        assert cmd[0] == "claude"
-        assert "-p" in cmd
-        assert "-" in cmd  # stdin marker
-        assert "--model" in cmd
-        idx = cmd.index("--model")
-        assert cmd[idx + 1] == "opus"
-        assert "--allowedTools" in cmd
-        assert "--max-turns" in cmd
-        assert "--max-budget-usd" in cmd
-
-    @patch("src.orchestrator.subprocess.run")
-    def test_prompt_sent_via_stdin(self, mock_run):
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=_make_cli_output(),
-            stderr="",
-        )
-        call_claude("my long prompt", timeout=10)
-        assert mock_run.call_args[1]["input"] == "my long prompt"
+@pytest.fixture
+def researcher(research_config, fake_backend, tmp_path) -> AutoResearcher:
+    return AutoResearcher(
+        config=research_config,
+        backend=fake_backend,
+        output_dir=tmp_path / "output",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -281,18 +123,16 @@ class TestAutoResearcherSetup:
     def test_resume_rebuilds_state(self, researcher):
         researcher._setup()
 
-        # Create fake iteration files
         (researcher.iterations_dir / "iter_001.md").write_text("# Iter 1", encoding="utf-8")
         (researcher.iterations_dir / "iter_002.md").write_text("# Iter 2", encoding="utf-8")
 
-        # Create fake results.tsv
         rows = [
             {"iteration": "001", "timestamp": "T", "dimension": "Dim A",
              "coverage_score": "80.0", "quality_score": "70.0", "total_score": "74.0",
-             "status": "keep", "hypothesis": "h", "cost_usd": "0.1"},
+             "status": "keep", "hypothesis": "h", "cumulative_cost_usd": "0.1"},
             {"iteration": "002", "timestamp": "T", "dimension": "Dim B",
              "coverage_score": "60.0", "quality_score": "50.0", "total_score": "54.0",
-             "status": "discard", "hypothesis": "h", "cost_usd": "0.2"},
+             "status": "discard", "hypothesis": "h", "cumulative_cost_usd": "0.2"},
         ]
         with open(researcher.results_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()), delimiter="\t")
@@ -402,23 +242,30 @@ class TestAutoResearcherSaveLog:
 
 
 # ---------------------------------------------------------------------------
-# AutoResearcher — _call helper
+# AutoResearcher — _call delegates to backend
 # ---------------------------------------------------------------------------
 
 class TestAutoResearcherCall:
-    @patch("src.orchestrator.call_claude")
-    def test_call_passes_defaults(self, mock_claude, researcher):
-        mock_claude.return_value = ClaudeResponse(text="ok", cost_usd=0.01, is_error=False)
-        researcher._call("prompt")
-        _, kwargs = mock_claude.call_args
-        assert kwargs["model"] == "sonnet"
-        assert kwargs["max_budget_usd"] == 0.10
-        assert kwargs["timeout"] == 10
+    def test_call_delegates_to_backend(self, researcher):
+        researcher.backend = MagicMock()
+        researcher.backend.invoke.return_value = AgentResponse(text="ok", cost_usd=0.01, is_error=False)
+        resp = researcher._call("prompt")
+        researcher.backend.invoke.assert_called_once()
+        assert resp.text == "ok"
 
-    @patch("src.orchestrator.call_claude")
-    def test_call_allows_overrides(self, mock_claude, researcher):
-        mock_claude.return_value = ClaudeResponse(text="ok", cost_usd=0.01, is_error=False)
+    def test_call_passes_config_defaults(self, researcher):
+        researcher.backend = MagicMock()
+        researcher.backend.invoke.return_value = AgentResponse(text="ok", cost_usd=0.01, is_error=False)
+        researcher._call("prompt")
+        opts = researcher.backend.invoke.call_args[0][1]
+        assert isinstance(opts, CallOptions)
+        assert opts.model == "sonnet"
+        assert opts.max_budget_usd == 0.10
+
+    def test_call_allows_overrides(self, researcher):
+        researcher.backend = MagicMock()
+        researcher.backend.invoke.return_value = AgentResponse(text="ok", cost_usd=0.01, is_error=False)
         researcher._call("prompt", model="opus", max_turns=3)
-        _, kwargs = mock_claude.call_args
-        assert kwargs["model"] == "opus"
-        assert kwargs["max_turns"] == 3
+        opts = researcher.backend.invoke.call_args[0][1]
+        assert opts.model == "opus"
+        assert opts.max_turns == 3

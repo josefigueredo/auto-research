@@ -13,7 +13,8 @@ from typing import Any
 
 import yaml
 
-VALID_MODELS = ("sonnet", "opus", "haiku")
+from .backend import VALID_BACKENDS
+
 
 
 @dataclass(frozen=True)
@@ -48,12 +49,14 @@ class ExecutionConfig:
         max_iterations: Maximum iterations before stopping.  ``0`` means
             infinite (run until interrupted).
         compress_every: Compress the knowledge base every *N* iterations.
-        allowed_tools: Comma-separated list of Claude Code tools available
-            to the research agent.
-        max_turns: Maximum agent turns per Claude CLI invocation.
+        allowed_tools: Comma-separated list of tools available to the agent.
+        max_turns: Maximum agent turns per CLI invocation.
         timeout_seconds: Per-invocation timeout in seconds.
-        model: Claude model to use (``"sonnet"``, ``"opus"``, or ``"haiku"``).
-        max_budget_per_call: USD cap per Claude CLI invocation.
+        backend: CLI backend to use (``"claude"``, ``"codex"``, ``"gemini"``,
+            or ``"copilot"``).
+        model: Model name (backend-specific, e.g. ``"sonnet"`` for Claude).
+        max_budget_per_call: USD cap per CLI invocation (backends that don't
+            support per-call budgets ignore this).
     """
 
     max_iterations: int = 0
@@ -61,6 +64,7 @@ class ExecutionConfig:
     allowed_tools: str = "WebSearch,WebFetch,Read,Bash,Glob,Grep"
     max_turns: int = 10
     timeout_seconds: int = 600
+    backend: str = "claude"
     model: str = "sonnet"
     max_budget_per_call: float = 0.50
 
@@ -136,11 +140,13 @@ class ResearchConfig:
         exec_raw: dict[str, Any] = research.get("execution", {})
         exec_defaults = ExecutionConfig()
 
-        model = exec_raw.get("model", exec_defaults.model)
-        if model not in VALID_MODELS:
+        backend = exec_raw.get("backend", exec_defaults.backend)
+        if backend not in VALID_BACKENDS:
             raise ValueError(
-                f"Invalid model '{model}'. Must be one of: {', '.join(VALID_MODELS)}"
+                f"Invalid backend '{backend}'. Must be one of: {', '.join(VALID_BACKENDS)}"
             )
+
+        model = exec_raw.get("model", exec_defaults.model)
 
         max_budget = exec_raw.get("max_budget_per_call", exec_defaults.max_budget_per_call)
         if max_budget < 0:
@@ -156,6 +162,7 @@ class ResearchConfig:
             allowed_tools=exec_raw.get("allowed_tools", exec_defaults.allowed_tools),
             max_turns=exec_raw.get("max_turns", exec_defaults.max_turns),
             timeout_seconds=timeout,
+            backend=backend,
             model=model,
             max_budget_per_call=max_budget,
         )

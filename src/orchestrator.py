@@ -1,8 +1,9 @@
-"""Autonomous research loop powered by Claude Code agents.
+"""Autonomous research loop powered by AI coding agent CLIs.
 
 Implements the Karpathy autoresearch pattern: an infinite loop of
 hypothesis generation, research execution, scoring, and keep/discard
-decisions.  Each iteration invokes the Claude Code CLI in headless mode.
+decisions.  Each iteration invokes a configurable CLI backend in
+headless mode.
 """
 
 from __future__ import annotations
@@ -10,16 +11,13 @@ from __future__ import annotations
 import csv
 import json
 import logging
-import subprocess
-import time
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .backend import AgentResponse, Backend, CallOptions
 from .config import ResearchConfig
 from .scorer import (
-    JUDGE_SCHEMA,
     IterationScore,
     _MAX_FINDINGS_CHARS,
     combine_scores,
@@ -32,180 +30,6 @@ log = logging.getLogger("autoresearch")
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 KB_MAX_WORDS = 4000
-RATE_LIMIT_BACKOFF_SECONDS = 120
-RATE_LIMIT_WARN_THRESHOLD = 0.80
-RATE_LIMIT_COOLDOWN_SECONDS = 30
-
-
-# ---------------------------------------------------------------------------
-# Rate limit detection
-# ---------------------------------------------------------------------------
-
-def _check_rate_limit(stdout: str) -> int:
-    """Parse Claude CLI JSON output for rate limit events.
-
-    Args:
-        stdout: Raw stdout from the Claude CLI process.
-
-    Returns:
-        Number of seconds to wait before the next call, or ``0`` if no
-        rate limiting was detected.
-    """
-    if not stdout:
-        return 0
-    try:
-        payload = json.loads(stdout)
-        events = payload if isinstance(payload, list) else [payload]
-        for event in events:
-            if not isinstance(event, dict):
-                continue
-            if event.get("type") == "rate_limit_event":
-                info = event.get("rate_limit_info", {})
-                utilization = info.get("utilization", 0)
-                if utilization >= 0.90:
-                    return RATE_LIMIT_BACKOFF_SECONDS
-                if utilization >= RATE_LIMIT_WARN_THRESHOLD:
-                    return RATE_LIMIT_COOLDOWN_SECONDS
-    except (json.JSONDecodeError, TypeError):
-        pass
-    return 0
-
-
-def _extract_rate_limit_utilization(stdout: str) -> float:
-    """Extract rate limit utilization from a Claude CLI response.
-
-    Args:
-        stdout: Raw stdout from the Claude CLI process.
-
-    Returns:
-        Utilization as a float between 0.0 and 1.0, or ``0.0`` if not found.
-    """
-    if not stdout:
-        return 0.0
-    try:
-        payload = json.loads(stdout)
-        events = payload if isinstance(payload, list) else [payload]
-        for event in events:
-            if isinstance(event, dict) and event.get("type") == "rate_limit_event":
-                return event.get("rate_limit_info", {}).get("utilization", 0.0)
-    except (json.JSONDecodeError, TypeError):
-        pass
-    return 0.0
-
-
-# ---------------------------------------------------------------------------
-# Claude CLI interface
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class ClaudeResponse:
-    """Result of a single Claude CLI invocation.
-
-    Attributes:
-        text: The assistant's text output.
-        cost_usd: Cost of this invocation in USD.
-        is_error: ``True`` if the invocation failed.
-    """
-
-    text: str
-    cost_usd: float
-    is_error: bool
-
-
-def call_claude(
-    prompt: str,
-    *,
-    model: str = "sonnet",
-    allowed_tools: str = "",
-    max_turns: int = 10,
-    timeout: int = 300,
-    json_schema: dict[str, Any] | None = None,
-    max_budget_usd: float = 0.0,
-) -> ClaudeResponse:
-    """Invoke the Claude Code CLI in headless mode.
-
-    Prompts are piped via stdin to avoid the Windows ~32 KB command-line
-    length limit.
-
-    Args:
-        prompt: The prompt text.
-        model: Claude model name (``"sonnet"``, ``"opus"``, ``"haiku"``).
-        allowed_tools: Comma-separated tools to pre-approve.
-        max_turns: Maximum agent turns.
-        timeout: Subprocess timeout in seconds.
-        json_schema: Optional JSON schema for structured output.
-        max_budget_usd: Per-call budget cap in USD (``0`` = no cap).
-
-    Returns:
-        A ``ClaudeResponse`` with the result text, cost, and error flag.
-    """
-    cmd: list[str] = ["claude", "-p", "-", "--output-format", "json"]
-
-    if model:
-        cmd.extend(["--model", model])
-    if max_budget_usd > 0:
-        cmd.extend(["--max-budget-usd", str(max_budget_usd)])
-    if allowed_tools:
-        cmd.extend(["--allowedTools", allowed_tools])
-    if max_turns > 0:
-        cmd.extend(["--max-turns", str(max_turns)])
-    if json_schema:
-        cmd.extend(["--json-schema", json.dumps(json_schema)])
-
-    log.debug("Claude CLI: %s (prompt: %d chars)", " ".join(cmd[:6]), len(prompt))
-
-    try:
-        result = subprocess.run(
-            cmd,
-            input=prompt,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            encoding="utf-8",
-        )
-    except subprocess.TimeoutExpired:
-        log.warning("Claude CLI timed out after %ds.", timeout)
-        return ClaudeResponse(text="", cost_usd=0.0, is_error=True)
-
-    if result.returncode != 0:
-        rate_wait = _check_rate_limit(result.stdout)
-        if rate_wait > 0:
-            log.warning("Rate limited. Waiting %d seconds before next call...", rate_wait)
-            time.sleep(rate_wait)
-        else:
-            log.error("Claude CLI failed (rc=%d): %s", result.returncode, result.stderr.strip())
-        return ClaudeResponse(text="", cost_usd=0.0, is_error=True)
-
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return ClaudeResponse(text=result.stdout, cost_usd=0.0, is_error=False)
-
-    # Dict format: direct result object.
-    if isinstance(payload, dict):
-        return ClaudeResponse(
-            text=payload.get("result", ""),
-            cost_usd=payload.get("cost_usd", 0.0),
-            is_error=payload.get("is_error", False),
-        )
-
-    # Array format: find the last "result" event.
-    text = ""
-    cost = 0.0
-    for event in reversed(payload):
-        if isinstance(event, dict) and event.get("type") == "result":
-            text = event.get("result", "")
-            cost = event.get("total_cost_usd", event.get("cost_usd", 0.0))
-            break
-
-    # Proactive throttling on successful responses.
-    utilization = _extract_rate_limit_utilization(result.stdout)
-    if utilization >= RATE_LIMIT_WARN_THRESHOLD:
-        wait = RATE_LIMIT_BACKOFF_SECONDS if utilization >= 0.90 else RATE_LIMIT_COOLDOWN_SECONDS
-        log.info("Rate limit at %.0f%%, cooling down %ds...", utilization * 100, wait)
-        time.sleep(wait)
-
-    return ClaudeResponse(text=text, cost_usd=cost, is_error=False)
 
 
 # ---------------------------------------------------------------------------
@@ -254,13 +78,17 @@ class AutoResearcher:
 
     Args:
         config: Research configuration.
+        backend: CLI backend to use for agent invocations.
         output_dir: Directory for all output artifacts.
     """
 
     MAX_ATTEMPTS_PER_DIMENSION = 3
 
-    def __init__(self, config: ResearchConfig, output_dir: Path) -> None:
+    def __init__(
+        self, config: ResearchConfig, backend: Backend, output_dir: Path
+    ) -> None:
         self.config = config
+        self.backend = backend
         self.output_dir = output_dir
         self.iterations_dir = output_dir / "iterations"
         self.results_path = output_dir / "results.tsv"
@@ -275,15 +103,19 @@ class AutoResearcher:
         self.results: list[dict[str, str]] = []
         self._dimension_attempts: dict[str, int] = {}
 
-    def _call(self, prompt: str, **kwargs: Any) -> ClaudeResponse:
-        """Invoke Claude CLI with this researcher's default model and budget.
+    def _call(self, prompt: str, **kwargs: Any) -> AgentResponse:
+        """Invoke the CLI backend with default options from config.
 
         Keyword arguments override the defaults from ``self.config.execution``.
         """
-        kwargs.setdefault("model", self.config.execution.model)
-        kwargs.setdefault("max_budget_usd", self.config.execution.max_budget_per_call)
-        kwargs.setdefault("timeout", self.config.execution.timeout_seconds)
-        return call_claude(prompt, **kwargs)
+        opts = CallOptions(
+            model=kwargs.pop("model", self.config.execution.model),
+            allowed_tools=kwargs.pop("allowed_tools", ""),
+            max_turns=kwargs.pop("max_turns", self.config.execution.max_turns),
+            max_budget_usd=kwargs.pop("max_budget_usd", self.config.execution.max_budget_per_call),
+        )
+        timeout = kwargs.pop("timeout", self.config.execution.timeout_seconds)
+        return self.backend.invoke(prompt, opts, timeout=timeout)
 
     # -- Public API --------------------------------------------------------
 
@@ -293,7 +125,8 @@ class AutoResearcher:
         self._resume()
 
         log.info(
-            "Starting autoresearch: %s (%d dimensions configured)",
+            "Starting autoresearch [%s]: %s (%d dimensions configured)",
+            self.backend.name,
             self.config.topic,
             len(self.config.dimensions),
         )
@@ -367,7 +200,7 @@ class AutoResearcher:
     # -- Core loop ---------------------------------------------------------
 
     def _run_iteration(self) -> None:
-        """Execute one full research iteration (hypothesis → execute → score → decide)."""
+        """Execute one full research iteration (hypothesis -> execute -> score -> decide)."""
         self.iteration += 1
         log.info("=" * 60)
         log.info("Iteration %03d", self.iteration)
@@ -425,7 +258,7 @@ class AutoResearcher:
     # -- Phase 1: Hypothesis -----------------------------------------------
 
     def _generate_hypothesis(self) -> dict[str, Any] | None:
-        """Ask Claude to pick the next research dimension.
+        """Ask the agent to pick the next research dimension.
 
         Returns:
             A dict with ``dimension``, ``questions``, ``approach``, and
@@ -470,7 +303,7 @@ class AutoResearcher:
     def _execute_research(
         self, dimension: str, questions: list[str], approach: str
     ) -> str:
-        """Run a Claude research agent on the given dimension.
+        """Run a research agent on the given dimension.
 
         Returns:
             Markdown findings text, or an empty string on failure.
@@ -726,6 +559,7 @@ class AutoResearcher:
         print("\n" + "=" * 60)
         print("  AUTORESEARCH SESSION COMPLETE")
         print("=" * 60)
+        print(f"  Backend:     {self.backend.name}")
         print(f"  Topic:       {self.config.topic}")
         print(f"  Iterations:  {self.iteration}")
         print(f"  Best score:  {self.best_score:.1f}")

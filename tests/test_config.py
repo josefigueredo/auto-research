@@ -155,11 +155,18 @@ class TestResearchConfigFromYaml:
         with pytest.raises(ValueError, match="research"):
             ResearchConfig.from_yaml(p)
 
-    def test_invalid_model_raises(self, tmp_path: Path):
-        p = tmp_path / "bad_model.yaml"
-        p.write_text("research:\n  topic: test\n  execution:\n    model: gpt4\n", encoding="utf-8")
-        with pytest.raises(ValueError, match="Invalid model"):
+    def test_invalid_backend_raises(self, tmp_path: Path):
+        p = tmp_path / "bad_backend.yaml"
+        p.write_text("research:\n  topic: test\n  execution:\n    backend: chatgpt\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="Invalid backend"):
             ResearchConfig.from_yaml(p)
+
+    def test_valid_backends(self, tmp_path: Path):
+        for backend in ("claude", "codex", "gemini", "copilot"):
+            p = tmp_path / f"{backend}.yaml"
+            p.write_text(f"research:\n  topic: test\n  execution:\n    backend: {backend}\n", encoding="utf-8")
+            cfg = ResearchConfig.from_yaml(p)
+            assert cfg.execution.backend == backend
 
     def test_negative_budget_raises(self, tmp_path: Path):
         p = tmp_path / "bad_budget.yaml"

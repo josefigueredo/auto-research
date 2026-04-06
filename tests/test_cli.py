@@ -1,4 +1,4 @@
-"""Tests for src.cli — argument parsing, Claude CLI check, logging setup."""
+"""Tests for src.cli — argument parsing, backend detection, logging setup."""
 
 import textwrap
 from pathlib import Path
@@ -6,34 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.cli import _check_claude_cli, _setup_logging, main
-
-
-# ---------------------------------------------------------------------------
-# _check_claude_cli
-# ---------------------------------------------------------------------------
-
-class TestCheckClaudeCli:
-    @patch("src.cli.subprocess.run")
-    def test_available(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0)
-        assert _check_claude_cli() is True
-
-    @patch("src.cli.subprocess.run")
-    def test_not_found(self, mock_run):
-        mock_run.side_effect = FileNotFoundError
-        assert _check_claude_cli() is False
-
-    @patch("src.cli.subprocess.run")
-    def test_timeout(self, mock_run):
-        import subprocess
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=10)
-        assert _check_claude_cli() is False
-
-    @patch("src.cli.subprocess.run")
-    def test_nonzero_rc(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=1)
-        assert _check_claude_cli() is False
+from src.cli import _setup_logging, main
 
 
 # ---------------------------------------------------------------------------
@@ -43,7 +16,6 @@ class TestCheckClaudeCli:
 class TestSetupLogging:
     def test_verbose(self):
         import logging
-        # Reset root logger handlers so basicConfig takes effect
         root = logging.getLogger()
         root.handlers.clear()
         root.setLevel(logging.WARNING)
@@ -72,6 +44,7 @@ class TestMain:
               topic: "Test"
               execution:
                 max_iterations: 1
+                backend: claude
                 model: sonnet
         """), encoding="utf-8")
         return p
@@ -86,14 +59,22 @@ class TestMain:
         result = main(["--config", str(bad)])
         assert result == 1
 
-    @patch("src.cli._check_claude_cli", return_value=False)
-    def test_no_claude_cli(self, mock_check, config_file):
+    @patch("src.cli.get_backend")
+    def test_backend_not_available(self, mock_get, config_file):
+        mock_backend = MagicMock()
+        mock_backend.check_available.return_value = False
+        mock_backend.name = "claude"
+        mock_backend.cli_executable.return_value = "claude"
+        mock_get.return_value = mock_backend
         result = main(["--config", str(config_file)])
         assert result == 1
 
     @patch("src.cli.AutoResearcher")
-    @patch("src.cli._check_claude_cli", return_value=True)
-    def test_synthesize_mode(self, mock_check, mock_researcher_cls, config_file):
+    @patch("src.cli.get_backend")
+    def test_synthesize_mode(self, mock_get, mock_researcher_cls, config_file):
+        mock_backend = MagicMock()
+        mock_backend.check_available.return_value = True
+        mock_get.return_value = mock_backend
         mock_instance = MagicMock()
         mock_researcher_cls.return_value = mock_instance
         result = main(["--config", str(config_file), "--synthesize"])
@@ -101,8 +82,11 @@ class TestMain:
         mock_instance.synthesize_only.assert_called_once()
 
     @patch("src.cli.AutoResearcher")
-    @patch("src.cli._check_claude_cli", return_value=True)
-    def test_run_mode(self, mock_check, mock_researcher_cls, config_file):
+    @patch("src.cli.get_backend")
+    def test_run_mode(self, mock_get, mock_researcher_cls, config_file):
+        mock_backend = MagicMock()
+        mock_backend.check_available.return_value = True
+        mock_get.return_value = mock_backend
         mock_instance = MagicMock()
         mock_researcher_cls.return_value = mock_instance
         result = main(["--config", str(config_file)])
@@ -110,18 +94,44 @@ class TestMain:
         mock_instance.run.assert_called_once()
 
     @patch("src.cli.AutoResearcher")
-    @patch("src.cli._check_claude_cli", return_value=True)
-    def test_output_dir_default(self, mock_check, mock_researcher_cls, config_file):
+    @patch("src.cli.get_backend")
+    def test_backend_flag_overrides_config(self, mock_get, mock_researcher_cls, config_file):
+        mock_backend = MagicMock()
+        mock_backend.check_available.return_value = True
+        mock_get.return_value = mock_backend
         mock_researcher_cls.return_value = MagicMock()
-        main(["--config", str(config_file)])
-        _, kwargs = mock_researcher_cls.call_args
-        assert "test" in str(kwargs["output_dir"])  # derived from config stem
+        main(["--config", str(config_file), "--backend", "codex"])
+        mock_get.assert_called_with("codex")
 
     @patch("src.cli.AutoResearcher")
-    @patch("src.cli._check_claude_cli", return_value=True)
-    def test_custom_output_dir(self, mock_check, mock_researcher_cls, config_file, tmp_path):
-        custom = tmp_path / "custom_out"
+    @patch("src.cli.get_backend")
+    def test_backend_defaults_from_config(self, mock_get, mock_researcher_cls, config_file):
+        mock_backend = MagicMock()
+        mock_backend.check_available.return_value = True
+        mock_get.return_value = mock_backend
         mock_researcher_cls.return_value = MagicMock()
+        main(["--config", str(config_file)])
+        mock_get.assert_called_with("claude")
+
+    @patch("src.cli.AutoResearcher")
+    @patch("src.cli.get_backend")
+    def test_custom_output_dir(self, mock_get, mock_researcher_cls, config_file, tmp_path):
+        mock_backend = MagicMock()
+        mock_backend.check_available.return_value = True
+        mock_get.return_value = mock_backend
+        mock_researcher_cls.return_value = MagicMock()
+        custom = tmp_path / "custom_out"
         main(["--config", str(config_file), "--output", str(custom)])
         _, kwargs = mock_researcher_cls.call_args
         assert kwargs["output_dir"] == custom.resolve()
+
+    @patch("src.cli.AutoResearcher")
+    @patch("src.cli.get_backend")
+    def test_backend_passed_to_researcher(self, mock_get, mock_researcher_cls, config_file):
+        mock_backend = MagicMock()
+        mock_backend.check_available.return_value = True
+        mock_get.return_value = mock_backend
+        mock_researcher_cls.return_value = MagicMock()
+        main(["--config", str(config_file)])
+        _, kwargs = mock_researcher_cls.call_args
+        assert kwargs["backend"] is mock_backend
