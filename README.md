@@ -1,4 +1,4 @@
-# autoresearch-claude
+# Autoresearch with Claude
 
 Autonomous research framework powered by Claude Code agents.
 Adapts [Karpathy's autoresearch pattern](https://github.com/karpathy/autoresearch)
@@ -11,7 +11,7 @@ Karpathy's original autoresearch runs an infinite loop on a GPU: modify code,
 train for 5 minutes, measure loss, keep or revert. This framework applies the
 same loop to knowledge research:
 
-```
+```plaintext
 LOOP FOREVER:
   1. Hypothesis  — Claude picks the next dimension to investigate
   2. Execute     — Claude researches it (web search, docs, analysis)
@@ -52,7 +52,7 @@ uv run python -m src.cli --config configs/aws_api_gateway.yaml -v
 
 ## Project Structure
 
-```
+```plaintext
 autoresearch-claude/
     src/
         cli.py              Entry point (--config, --resume, --synthesize, -v)
@@ -74,7 +74,6 @@ autoresearch-claude/
             iterations/         Per-iteration markdown files
             synthesis.md        Final synthesized report
     diagrams.md            Architecture diagrams (Mermaid)
-    autoresearch_runner.py CPU-only local test of the loop pattern (numpy)
 ```
 
 ## Creating a New Research Topic
@@ -82,53 +81,55 @@ autoresearch-claude/
 1. Copy `configs/_template.yaml` to `configs/your_topic.yaml`.
 2. Fill in the fields:
 
-```yaml
-research:
-  topic: "Your research question"
-  goal: "What the final deliverable should look like"
-  dimensions:
-    - "First dimension to explore"
-    - "Second dimension to explore"
-  execution:
-    model: sonnet             # sonnet (default), opus, or haiku
-    max_iterations: 0         # 0 = infinite
-    max_turns: 10             # claude agent turns per research call
-    max_budget_per_call: 0.50 # USD cap per invocation
-    timeout_seconds: 600      # per-call timeout
-    compress_every: 5         # compress knowledge base every N iterations
-```
+  ```yaml
+  research:
+    topic: "Your research question"
+    goal: "What the final deliverable should look like"
+    dimensions:
+      - "First dimension to explore"
+      - "Second dimension to explore"
+    execution:
+      model: sonnet # sonnet (default), opus, or haiku
+      max_iterations: 0 # 0 = infinite
+      max_turns: 10 # claude agent turns per research call
+      max_budget_per_call: 0.50 # USD cap per invocation
+      timeout_seconds: 600 # per-call timeout
+      compress_every: 5 # compress knowledge base every N iterations
+  ```
 
 3. Run: `uv run python -m src.cli --config configs/your_topic.yaml`
 
 ## Configuration Reference
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `topic` | (required) | The research question |
-| `goal` | same as topic | Description of desired output |
-| `dimensions` | `[]` | List of dimensions to explore |
-| `model` | `sonnet` | Claude model: `sonnet`, `opus`, or `haiku` |
-| `max_iterations` | `0` | Max iterations (0 = infinite) |
-| `max_turns` | `10` | Agent turns per research call |
-| `max_budget_per_call` | `0.50` | USD cap per Claude invocation |
-| `timeout_seconds` | `600` | Timeout per invocation in seconds |
-| `compress_every` | `5` | Compress knowledge base every N iterations |
-| `allowed_tools` | `WebSearch,...` | Tools available to the research agent |
-| `min_dimensions_per_iteration` | `1` | Min dimensions expected per iteration |
-| `target_dimensions_total` | `10` | Target total dimensions to cover |
-| `evidence_types` | see template | Evidence types for heuristic scoring |
+| Field                          | Default         | Description                                |
+| ------------------------------ | --------------- | ------------------------------------------ |
+| `topic`                        | (required)      | The research question                      |
+| `goal`                         | same as topic   | Description of desired output              |
+| `dimensions`                   | `[]`            | List of dimensions to explore              |
+| `model`                        | `sonnet`        | Claude model: `sonnet`, `opus`, or `haiku` |
+| `max_iterations`               | `0`             | Max iterations (0 = infinite)              |
+| `max_turns`                    | `10`            | Agent turns per research call              |
+| `max_budget_per_call`          | `0.50`          | USD cap per Claude invocation              |
+| `timeout_seconds`              | `600`           | Timeout per invocation in seconds          |
+| `compress_every`               | `5`             | Compress knowledge base every N iterations |
+| `allowed_tools`                | `WebSearch,...` | Tools available to the research agent      |
+| `min_dimensions_per_iteration` | `1`             | Min dimensions expected per iteration      |
+| `target_dimensions_total`      | `10`            | Target total dimensions to cover           |
+| `evidence_types`               | see template    | Evidence types for heuristic scoring       |
 
 ## How Scoring Works
 
 Each iteration is scored on two axes:
 
 **Heuristic (40%)** — deterministic, fast:
+
 - Dimensions covered vs config list
 - Evidence types found (tables, pricing, code, trade-offs)
 - New questions discovered
 - Substantive word count
 
 **LLM Judge (60%)** — qualitative, via a separate Claude call:
+
 - Depth (1-10): beyond surface-level feature lists?
 - Accuracy (1-10): verifiable facts, qualified claims?
 - Novelty (1-10): new information vs prior knowledge base?
@@ -150,16 +151,16 @@ file is saved but findings are not merged (DISCARD).
 
 ## Mapping to the Original Autoresearch
 
-| Karpathy's autoresearch | This framework |
-|-------------------------|----------------|
-| `train.py` (model code) | Research config YAML |
-| `uv run train.py` | `claude -p - --model sonnet` |
-| `val_bpb` (lower = better) | `total_score` (higher = better) |
-| `git commit` / `git reset` | Merge / skip findings in knowledge base |
-| `results.tsv` | `results.tsv` (same pattern, research metrics) |
-| `program.md` | Orchestrator + prompt templates |
-| 5-minute time budget | `--max-turns` + `--timeout` per call |
-| Single GPU | Claude Code CLI (no hardware required) |
+| Karpathy's autoresearch    | This framework                                 |
+| -------------------------- | ---------------------------------------------- |
+| `train.py` (model code)    | Research config YAML                           |
+| `uv run train.py`          | `claude -p - --model sonnet`                   |
+| `val_bpb` (lower = better) | `total_score` (higher = better)                |
+| `git commit` / `git reset` | Merge / skip findings in knowledge base        |
+| `results.tsv`              | `results.tsv` (same pattern, research metrics) |
+| `program.md`               | Orchestrator + prompt templates                |
+| 5-minute time budget       | `--max-turns` + `--timeout` per call           |
+| Single GPU                 | Claude Code CLI (no hardware required)         |
 
 ## Demo Results: AWS API Gateway
 
@@ -174,6 +175,7 @@ Results:
 - Total cost: ~$2 in Claude API usage
 
 The synthesis report is generated via:
+
 ```bash
 uv run python -m src.cli --config configs/aws_api_gateway.yaml --synthesize
 ```
