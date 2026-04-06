@@ -140,7 +140,37 @@ class TestResearchConfigFromYaml:
     def test_missing_topic_raises(self, tmp_path: Path):
         p = tmp_path / "bad.yaml"
         p.write_text("research:\n  goal: 'no topic'\n", encoding="utf-8")
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError, match="topic"):
+            ResearchConfig.from_yaml(p)
+
+    def test_empty_file_raises(self, tmp_path: Path):
+        p = tmp_path / "empty.yaml"
+        p.write_text("", encoding="utf-8")
+        with pytest.raises(ValueError, match="YAML mapping"):
+            ResearchConfig.from_yaml(p)
+
+    def test_missing_research_key_raises(self, tmp_path: Path):
+        p = tmp_path / "bad.yaml"
+        p.write_text("other_key: value\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="research"):
+            ResearchConfig.from_yaml(p)
+
+    def test_invalid_model_raises(self, tmp_path: Path):
+        p = tmp_path / "bad_model.yaml"
+        p.write_text("research:\n  topic: test\n  execution:\n    model: gpt4\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="Invalid model"):
+            ResearchConfig.from_yaml(p)
+
+    def test_negative_budget_raises(self, tmp_path: Path):
+        p = tmp_path / "bad_budget.yaml"
+        p.write_text("research:\n  topic: test\n  execution:\n    max_budget_per_call: -1\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="non-negative"):
+            ResearchConfig.from_yaml(p)
+
+    def test_zero_timeout_raises(self, tmp_path: Path):
+        p = tmp_path / "bad_timeout.yaml"
+        p.write_text("research:\n  topic: test\n  execution:\n    timeout_seconds: 0\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="positive"):
             ResearchConfig.from_yaml(p)
 
     def test_frozen(self, minimal_yaml: Path):

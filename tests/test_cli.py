@@ -80,6 +80,12 @@ class TestMain:
         result = main(["--config", str(tmp_path / "nonexistent.yaml")])
         assert result == 1
 
+    def test_malformed_config(self, tmp_path):
+        bad = tmp_path / "bad.yaml"
+        bad.write_text("not_research: true\n", encoding="utf-8")
+        result = main(["--config", str(bad)])
+        assert result == 1
+
     @patch("src.cli._check_claude_cli", return_value=False)
     def test_no_claude_cli(self, mock_check, config_file):
         result = main(["--config", str(config_file)])

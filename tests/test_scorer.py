@@ -81,13 +81,10 @@ class TestIterationScore:
         assert s.dimensions_covered == []
         assert s.gaps == []
 
-    def test_status_keep(self):
+    def test_has_no_status_property(self):
+        """status property was removed — keep/discard is decided by orchestrator."""
         s = IterationScore(total=50.0)
-        assert s.status == "keep"
-
-    def test_status_discard(self):
-        s = IterationScore(total=0.0)
-        assert s.status == "discard"
+        assert not hasattr(s, "status")
 
 
 # ---------------------------------------------------------------------------

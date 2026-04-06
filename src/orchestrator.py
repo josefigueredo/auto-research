@@ -1,4 +1,9 @@
-"""Autonomous research loop powered by Claude Code agents."""
+"""Autonomous research loop powered by Claude Code agents.
+
+Implements the Karpathy autoresearch pattern: an infinite loop of
+hypothesis generation, research execution, scoring, and keep/discard
+decisions.  Each iteration invokes the Claude Code CLI in headless mode.
+"""
 
 from __future__ import annotations
 
@@ -6,16 +11,17 @@ import csv
 import json
 import logging
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from .config import ResearchConfig
 from .scorer import (
     JUDGE_SCHEMA,
     IterationScore,
+    _MAX_FINDINGS_CHARS,
     combine_scores,
     heuristic_score,
     parse_judge_response,
@@ -25,12 +31,10 @@ from .scorer import (
 log = logging.getLogger("autoresearch")
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
-HEURISTIC_WEIGHT = 0.4
-JUDGE_WEIGHT = 0.6
 KB_MAX_WORDS = 4000
-RATE_LIMIT_BACKOFF_SECONDS = 120  # wait 2 min when rate limited
-RATE_LIMIT_WARN_THRESHOLD = 0.80  # slow down above 80% utilization
-RATE_LIMIT_COOLDOWN_SECONDS = 30  # pause between iterations when nearing limit
+RATE_LIMIT_BACKOFF_SECONDS = 120
+RATE_LIMIT_WARN_THRESHOLD = 0.80
+RATE_LIMIT_COOLDOWN_SECONDS = 30
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +42,15 @@ RATE_LIMIT_COOLDOWN_SECONDS = 30  # pause between iterations when nearing limit
 # ---------------------------------------------------------------------------
 
 def _check_rate_limit(stdout: str) -> int:
-    """Parse Claude CLI JSON output for rate limit events. Return seconds to wait."""
+    """Parse Claude CLI JSON output for rate limit events.
+
+    Args:
+        stdout: Raw stdout from the Claude CLI process.
+
+    Returns:
+        Number of seconds to wait before the next call, or ``0`` if no
+        rate limiting was detected.
+    """
     if not stdout:
         return 0
     try:
@@ -60,7 +72,14 @@ def _check_rate_limit(stdout: str) -> int:
 
 
 def _extract_rate_limit_utilization(stdout: str) -> float:
-    """Extract rate limit utilization from response for throttling."""
+    """Extract rate limit utilization from a Claude CLI response.
+
+    Args:
+        stdout: Raw stdout from the Claude CLI process.
+
+    Returns:
+        Utilization as a float between 0.0 and 1.0, or ``0.0`` if not found.
+    """
     if not stdout:
         return 0.0
     try:
@@ -80,6 +99,14 @@ def _extract_rate_limit_utilization(stdout: str) -> float:
 
 @dataclass(frozen=True)
 class ClaudeResponse:
+    """Result of a single Claude CLI invocation.
+
+    Attributes:
+        text: The assistant's text output.
+        cost_usd: Cost of this invocation in USD.
+        is_error: ``True`` if the invocation failed.
+    """
+
     text: str
     cost_usd: float
     is_error: bool
@@ -92,12 +119,25 @@ def call_claude(
     allowed_tools: str = "",
     max_turns: int = 10,
     timeout: int = 300,
-    json_schema: dict | None = None,
+    json_schema: dict[str, Any] | None = None,
     max_budget_usd: float = 0.0,
 ) -> ClaudeResponse:
-    """Invoke Claude Code CLI in headless mode and return the result.
+    """Invoke the Claude Code CLI in headless mode.
 
-    Uses stdin pipe for prompts to avoid Windows command-line length limits (~32KB).
+    Prompts are piped via stdin to avoid the Windows ~32 KB command-line
+    length limit.
+
+    Args:
+        prompt: The prompt text.
+        model: Claude model name (``"sonnet"``, ``"opus"``, ``"haiku"``).
+        allowed_tools: Comma-separated tools to pre-approve.
+        max_turns: Maximum agent turns.
+        timeout: Subprocess timeout in seconds.
+        json_schema: Optional JSON schema for structured output.
+        max_budget_usd: Per-call budget cap in USD (``0`` = no cap).
+
+    Returns:
+        A ``ClaudeResponse`` with the result text, cost, and error flag.
     """
     cmd: list[str] = ["claude", "-p", "-", "--output-format", "json"]
 
@@ -107,7 +147,7 @@ def call_claude(
         cmd.extend(["--max-budget-usd", str(max_budget_usd)])
     if allowed_tools:
         cmd.extend(["--allowedTools", allowed_tools])
-    if max_turns:
+    if max_turns > 0:
         cmd.extend(["--max-turns", str(max_turns)])
     if json_schema:
         cmd.extend(["--json-schema", json.dumps(json_schema)])
@@ -128,14 +168,12 @@ def call_claude(
         return ClaudeResponse(text="", cost_usd=0.0, is_error=True)
 
     if result.returncode != 0:
-        stderr = result.stderr.strip()
-        # Check for rate limiting in stdout (JSON may still have events)
         rate_wait = _check_rate_limit(result.stdout)
         if rate_wait > 0:
             log.warning("Rate limited. Waiting %d seconds before next call...", rate_wait)
             time.sleep(rate_wait)
         else:
-            log.error("Claude CLI failed (rc=%d): %s", result.returncode, stderr)
+            log.error("Claude CLI failed (rc=%d): %s", result.returncode, result.stderr.strip())
         return ClaudeResponse(text="", cost_usd=0.0, is_error=True)
 
     try:
@@ -143,7 +181,7 @@ def call_claude(
     except json.JSONDecodeError:
         return ClaudeResponse(text=result.stdout, cost_usd=0.0, is_error=False)
 
-    # The JSON output is either a dict with "result" or an array of events.
+    # Dict format: direct result object.
     if isinstance(payload, dict):
         return ClaudeResponse(
             text=payload.get("result", ""),
@@ -160,7 +198,7 @@ def call_claude(
             cost = event.get("total_cost_usd", event.get("cost_usd", 0.0))
             break
 
-    # Proactive throttling on successful responses
+    # Proactive throttling on successful responses.
     utilization = _extract_rate_limit_utilization(result.stdout)
     if utilization >= RATE_LIMIT_WARN_THRESHOLD:
         wait = RATE_LIMIT_BACKOFF_SECONDS if utilization >= 0.90 else RATE_LIMIT_COOLDOWN_SECONDS
@@ -175,11 +213,31 @@ def call_claude(
 # ---------------------------------------------------------------------------
 
 def _load_template(name: str) -> str:
+    """Read a prompt template file from the prompts directory.
+
+    Raises:
+        FileNotFoundError: With a user-friendly message if the template
+            is missing.
+    """
     path = PROMPTS_DIR / name
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Prompt template not found: {path}. "
+            f"Ensure the 'prompts/' directory contains '{name}'."
+        )
     return path.read_text(encoding="utf-8")
 
 
 def _render(template_name: str, **kwargs: str) -> str:
+    """Load a prompt template and render it with the given variables.
+
+    Args:
+        template_name: Filename of the template in ``prompts/``.
+        **kwargs: Template variables to substitute.
+
+    Returns:
+        The rendered prompt string.
+    """
     tmpl = _load_template(template_name)
     return tmpl.format(**kwargs)
 
@@ -192,8 +250,14 @@ class AutoResearcher:
     """Autonomous research loop.
 
     Mirrors Karpathy's autoresearch pattern:
-    Hypothesis -> Execute -> Measure -> Evaluate -> Keep/Revert -> Log -> Repeat
+    Hypothesis -> Execute -> Score -> Keep/Revert -> Log -> Repeat.
+
+    Args:
+        config: Research configuration.
+        output_dir: Directory for all output artifacts.
     """
+
+    MAX_ATTEMPTS_PER_DIMENSION = 3
 
     def __init__(self, config: ResearchConfig, output_dir: Path) -> None:
         self.config = config
@@ -203,18 +267,19 @@ class AutoResearcher:
         self.kb_path = output_dir / "knowledge_base.md"
         self.synthesis_path = output_dir / "synthesis.md"
 
-        self.iteration = 0
-        self.best_score = 0.0
-        self.knowledge_base = ""
+        self.iteration: int = 0
+        self.best_score: float = 0.0
+        self.knowledge_base: str = ""
         self.explored_dimensions: list[str] = []
-        self.total_cost = 0.0
+        self.total_cost: float = 0.0
         self.results: list[dict[str, str]] = []
         self._dimension_attempts: dict[str, int] = {}
 
-    MAX_ATTEMPTS_PER_DIMENSION = 3
+    def _call(self, prompt: str, **kwargs: Any) -> ClaudeResponse:
+        """Invoke Claude CLI with this researcher's default model and budget.
 
-    def _call(self, prompt: str, **kwargs) -> ClaudeResponse:
-        """Call Claude with this researcher's model and budget defaults."""
+        Keyword arguments override the defaults from ``self.config.execution``.
+        """
         kwargs.setdefault("model", self.config.execution.model)
         kwargs.setdefault("max_budget_usd", self.config.execution.max_budget_per_call)
         kwargs.setdefault("timeout", self.config.execution.timeout_seconds)
@@ -223,7 +288,7 @@ class AutoResearcher:
     # -- Public API --------------------------------------------------------
 
     def run(self) -> None:
-        """Start the infinite research loop. Ctrl+C triggers synthesis."""
+        """Start the research loop.  ``Ctrl+C`` triggers synthesis."""
         self._setup()
         self._resume()
 
@@ -254,6 +319,7 @@ class AutoResearcher:
     # -- Setup & resume ----------------------------------------------------
 
     def _setup(self) -> None:
+        """Create output directories and initialise results.tsv if needed."""
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.iterations_dir.mkdir(exist_ok=True)
 
@@ -261,14 +327,13 @@ class AutoResearcher:
             self._write_tsv_header()
 
     def _resume(self) -> None:
-        """Rebuild state from existing iteration files."""
+        """Rebuild in-memory state from existing iteration files and TSV."""
         existing = sorted(self.iterations_dir.glob("iter_*.md"))
         if not existing:
             return
 
         log.info("Resuming from %d existing iterations.", len(existing))
 
-        # Reload results.tsv
         if self.results_path.exists():
             with open(self.results_path, encoding="utf-8") as f:
                 reader = csv.DictReader(f, delimiter="\t")
@@ -277,23 +342,23 @@ class AutoResearcher:
                     dim = row.get("dimension", "")
                     status = row.get("status", "")
 
-                    # Track attempts per dimension
                     if dim:
                         self._dimension_attempts[dim] = self._dimension_attempts.get(dim, 0) + 1
 
                     if status == "keep":
-                        score = float(row.get("total_score", 0))
+                        try:
+                            score = float(row.get("total_score", 0))
+                        except (ValueError, TypeError):
+                            score = 0.0
                         if score > self.best_score:
                             self.best_score = score
                         if dim and dim not in self.explored_dimensions:
                             self.explored_dimensions.append(dim)
 
-                    # Mark exhausted dimensions as explored so we move on
                     if dim and self._dimension_attempts.get(dim, 0) >= self.MAX_ATTEMPTS_PER_DIMENSION:
                         if dim not in self.explored_dimensions:
                             self.explored_dimensions.append(dim)
 
-        # Reload knowledge base
         if self.kb_path.exists():
             self.knowledge_base = self.kb_path.read_text(encoding="utf-8")
 
@@ -302,12 +367,12 @@ class AutoResearcher:
     # -- Core loop ---------------------------------------------------------
 
     def _run_iteration(self) -> None:
+        """Execute one full research iteration (hypothesis → execute → score → decide)."""
         self.iteration += 1
         log.info("=" * 60)
         log.info("Iteration %03d", self.iteration)
         log.info("=" * 60)
 
-        # 1. Hypothesis
         hypothesis = self._generate_hypothesis()
         if not hypothesis:
             log.warning("Hypothesis generation failed, retrying next iteration.")
@@ -317,12 +382,10 @@ class AutoResearcher:
         questions = hypothesis.get("questions", [])
         approach = hypothesis.get("approach", "")
 
-        # Track attempts per dimension
         self._dimension_attempts[dimension] = self._dimension_attempts.get(dimension, 0) + 1
         attempts = self._dimension_attempts[dimension]
         log.info("Dimension: %s (attempt %d/%d)", dimension, attempts, self.MAX_ATTEMPTS_PER_DIMENSION)
 
-        # 2. Execute research
         findings = self._execute_research(dimension, questions, approach)
         if not findings:
             log.warning("Research execution returned empty, logging crash.")
@@ -330,7 +393,6 @@ class AutoResearcher:
             self._maybe_exhaust_dimension(dimension)
             return
 
-        # 3. Score
         score = self._score(dimension, findings)
         log.info(
             "Scores — coverage: %.1f, quality: %.1f, total: %.1f (best: %.1f)",
@@ -340,7 +402,6 @@ class AutoResearcher:
             self.best_score,
         )
 
-        # 4. Decide: keep or discard
         kept = score.total > self.best_score
         if kept:
             self.best_score = score.total
@@ -350,7 +411,6 @@ class AutoResearcher:
             log.info("DISCARD — findings saved but not merged.")
             self._maybe_exhaust_dimension(dimension)
 
-        # 5. Save iteration file + log
         self._save_iteration(dimension, findings, score, kept)
         self._log_result(
             dimension,
@@ -359,13 +419,18 @@ class AutoResearcher:
             status="keep" if kept else "discard",
         )
 
-        # 6. Periodic compression
         if self.iteration % self.config.execution.compress_every == 0:
             self._compress_knowledge_base()
 
     # -- Phase 1: Hypothesis -----------------------------------------------
 
-    def _generate_hypothesis(self) -> dict | None:
+    def _generate_hypothesis(self) -> dict[str, Any] | None:
+        """Ask Claude to pick the next research dimension.
+
+        Returns:
+            A dict with ``dimension``, ``questions``, ``approach``, and
+            ``rationale`` keys, or ``None`` if the call failed.
+        """
         unexplored = [
             d for d in self.config.dimensions
             if d not in self.explored_dimensions
@@ -389,7 +454,6 @@ class AutoResearcher:
         try:
             return json.loads(resp.text)
         except json.JSONDecodeError:
-            # Try extracting JSON from within the text
             text = resp.text
             start = text.find("{")
             end = text.rfind("}")
@@ -406,6 +470,11 @@ class AutoResearcher:
     def _execute_research(
         self, dimension: str, questions: list[str], approach: str
     ) -> str:
+        """Run a Claude research agent on the given dimension.
+
+        Returns:
+            Markdown findings text, or an empty string on failure.
+        """
         formatted_questions = "\n".join(f"- {q}" for q in questions) if questions else "- Explore broadly"
 
         prompt = _render(
@@ -434,19 +503,22 @@ class AutoResearcher:
     # -- Phase 3: Score ----------------------------------------------------
 
     def _score(self, dimension: str, findings: str) -> IterationScore:
-        # Heuristic
+        """Score findings using heuristics and an LLM judge.
+
+        Returns:
+            An ``IterationScore`` with coverage, quality, and combined total.
+        """
         coverage = heuristic_score(findings, self.config, self.explored_dimensions)
 
-        # LLM judge
-        quality = 50.0  # fallback
-        judge_raw: dict = {}
+        quality = 50.0  # fallback if judge fails
+        judge_raw: dict[str, Any] = {}
 
         try:
             prompt = _render(
                 "evaluate.md",
                 topic=self.config.topic,
                 dimension=dimension,
-                findings=findings[:8000],  # cap to avoid token blowup
+                findings=findings[:_MAX_FINDINGS_CHARS],
                 knowledge_summary=self._kb_summary(),
             )
 
@@ -475,6 +547,7 @@ class AutoResearcher:
     def _merge_findings(
         self, dimension: str, findings: str, score: IterationScore
     ) -> None:
+        """Merge kept findings into the knowledge base and mark the dimension explored."""
         if dimension not in self.explored_dimensions:
             self.explored_dimensions.append(dimension)
 
@@ -482,15 +555,12 @@ class AutoResearcher:
         self.knowledge_base += header + findings
         self.kb_path.write_text(self.knowledge_base, encoding="utf-8")
 
-        # Register discovered dimensions from gaps
         for gap in score.gaps:
-            if gap not in self.explored_dimensions and gap not in [
-                d for d in self.config.dimensions
-            ]:
+            if gap not in self.explored_dimensions and gap not in self.config.dimensions:
                 log.info("New dimension discovered: %s", gap)
 
     def _maybe_exhaust_dimension(self, dimension: str) -> None:
-        """Mark a dimension as explored if max attempts reached."""
+        """Mark a dimension as explored if it has reached max attempts."""
         if self._dimension_attempts.get(dimension, 0) >= self.MAX_ATTEMPTS_PER_DIMENSION:
             if dimension not in self.explored_dimensions:
                 self.explored_dimensions.append(dimension)
@@ -509,6 +579,7 @@ class AutoResearcher:
         score: IterationScore,
         kept: bool,
     ) -> None:
+        """Write the iteration's findings to a numbered markdown file."""
         filename = f"iter_{self.iteration:03d}.md"
         path = self.iterations_dir / filename
 
@@ -530,6 +601,7 @@ class AutoResearcher:
         *,
         status: str,
     ) -> None:
+        """Append a row to results.tsv for this iteration."""
         row = {
             "iteration": f"{self.iteration:03d}",
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
@@ -539,7 +611,7 @@ class AutoResearcher:
             "total_score": f"{score.total:.1f}",
             "status": status,
             "hypothesis": hypothesis[:120],
-            "cost_usd": f"{self.total_cost:.3f}",
+            "cumulative_cost_usd": f"{self.total_cost:.3f}",
         }
         self.results.append(row)
 
@@ -548,6 +620,7 @@ class AutoResearcher:
             writer.writerow(row)
 
     def _write_tsv_header(self) -> None:
+        """Write the header row to a new results.tsv file."""
         fields = [
             "iteration",
             "timestamp",
@@ -557,7 +630,7 @@ class AutoResearcher:
             "total_score",
             "status",
             "hypothesis",
-            "cost_usd",
+            "cumulative_cost_usd",
         ]
         with open(self.results_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fields, delimiter="\t")
@@ -566,6 +639,7 @@ class AutoResearcher:
     # -- Compression -------------------------------------------------------
 
     def _compress_knowledge_base(self) -> None:
+        """Distill the knowledge base if it exceeds ``KB_MAX_WORDS``."""
         word_count = len(self.knowledge_base.split())
         if word_count <= KB_MAX_WORDS:
             return
@@ -594,6 +668,7 @@ class AutoResearcher:
     # -- Synthesis ---------------------------------------------------------
 
     def _generate_synthesis(self) -> None:
+        """Generate a final synthesis report from the accumulated knowledge base."""
         if not self.knowledge_base:
             log.info("No knowledge base to synthesize.")
             return
@@ -618,7 +693,7 @@ class AutoResearcher:
     # -- Helpers -----------------------------------------------------------
 
     def _kb_summary(self) -> str:
-        """Return a bounded summary of the knowledge base for prompt injection."""
+        """Return a bounded summary of the knowledge base for prompt context."""
         if not self.knowledge_base:
             return "(No prior findings yet — this is the first iteration.)"
         words = self.knowledge_base.split()
@@ -627,11 +702,13 @@ class AutoResearcher:
         return " ".join(words[:KB_MAX_WORDS]) + "\n\n[... truncated for brevity]"
 
     def _format_dimension_list(self, dims: list[str]) -> str:
+        """Format a list of dimensions as a markdown bullet list."""
         if not dims:
             return "(none)"
         return "\n".join(f"- {d}" for d in dims)
 
     def _format_results_table(self) -> str:
+        """Format the results log as a markdown table for synthesis prompts."""
         if not self.results:
             return "(no results yet)"
         lines = ["| Iter | Dimension | Score | Status |", "|------|-----------|-------|--------|"]
@@ -645,6 +722,7 @@ class AutoResearcher:
         return "\n".join(lines)
 
     def _print_summary(self) -> None:
+        """Print a session summary to stdout."""
         print("\n" + "=" * 60)
         print("  AUTORESEARCH SESSION COMPLETE")
         print("=" * 60)

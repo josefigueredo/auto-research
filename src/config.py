@@ -1,4 +1,9 @@
-"""Research configuration loading and validation."""
+"""Research configuration loading and validation.
+
+Provides frozen dataclasses for scoring, execution, and top-level research
+configuration.  Configs are loaded from YAML files via
+``ResearchConfig.from_yaml``.
+"""
 
 from __future__ import annotations
 
@@ -8,9 +13,22 @@ from typing import Any
 
 import yaml
 
+VALID_MODELS = ("sonnet", "opus", "haiku")
+
 
 @dataclass(frozen=True)
 class ScoringConfig:
+    """Controls how each research iteration is scored.
+
+    Attributes:
+        min_dimensions_per_iteration: Minimum dimensions expected per iteration
+            for full heuristic credit.
+        target_dimensions_total: Target number of dimensions across all
+            iterations.
+        evidence_types: Tuple of evidence type labels the heuristic scorer
+            looks for (e.g. ``"comparison_table"``, ``"pricing_data"``).
+    """
+
     min_dimensions_per_iteration: int = 1
     target_dimensions_total: int = 10
     evidence_types: tuple[str, ...] = (
@@ -24,17 +42,41 @@ class ScoringConfig:
 
 @dataclass(frozen=True)
 class ExecutionConfig:
-    max_iterations: int = 0  # 0 = infinite
+    """Runtime parameters for the research loop.
+
+    Attributes:
+        max_iterations: Maximum iterations before stopping.  ``0`` means
+            infinite (run until interrupted).
+        compress_every: Compress the knowledge base every *N* iterations.
+        allowed_tools: Comma-separated list of Claude Code tools available
+            to the research agent.
+        max_turns: Maximum agent turns per Claude CLI invocation.
+        timeout_seconds: Per-invocation timeout in seconds.
+        model: Claude model to use (``"sonnet"``, ``"opus"``, or ``"haiku"``).
+        max_budget_per_call: USD cap per Claude CLI invocation.
+    """
+
+    max_iterations: int = 0
     compress_every: int = 5
     allowed_tools: str = "WebSearch,WebFetch,Read,Bash,Glob,Grep"
     max_turns: int = 10
     timeout_seconds: int = 600
-    model: str = "sonnet"  # "sonnet", "opus", or "haiku"
-    max_budget_per_call: float = 0.50  # USD cap per claude invocation
+    model: str = "sonnet"
+    max_budget_per_call: float = 0.50
 
 
 @dataclass(frozen=True)
 class ResearchConfig:
+    """Top-level research configuration loaded from a YAML file.
+
+    Attributes:
+        topic: The research question.
+        goal: Description of the desired deliverable.
+        dimensions: Tuple of dimensions to explore.
+        scoring: Scoring parameters.
+        execution: Execution / runtime parameters.
+    """
+
     topic: str
     goal: str
     dimensions: tuple[str, ...]
@@ -43,28 +85,79 @@ class ResearchConfig:
 
     @classmethod
     def from_yaml(cls, path: Path) -> ResearchConfig:
+        """Load a research config from a YAML file.
+
+        The YAML must contain a top-level ``research`` key with at least a
+        ``topic`` field.  All other fields are optional and fall back to
+        dataclass defaults.
+
+        Args:
+            path: Path to the YAML config file.
+
+        Returns:
+            A validated ``ResearchConfig`` instance.
+
+        Raises:
+            FileNotFoundError: If *path* does not exist.
+            ValueError: If the YAML is empty, malformed, or missing required
+                fields.
+        """
         with open(path, encoding="utf-8") as f:
-            raw: dict[str, Any] = yaml.safe_load(f)
+            raw: Any = yaml.safe_load(f)
 
-        research = raw["research"]
+        if not isinstance(raw, dict):
+            raise ValueError(f"Config file must contain a YAML mapping, got {type(raw).__name__}")
 
-        scoring_raw = research.get("scoring", {})
+        if "research" not in raw:
+            raise ValueError("Config file must contain a top-level 'research' key")
+
+        research: dict[str, Any] = raw["research"]
+
+        if "topic" not in research:
+            raise ValueError("Config 'research' section must contain a 'topic' field")
+
+        # --- Scoring ----------------------------------------------------------
+        scoring_raw: dict[str, Any] = research.get("scoring", {})
         evidence = scoring_raw.get("evidence_types")
+        scoring_defaults = ScoringConfig()
         scoring = ScoringConfig(
-            min_dimensions_per_iteration=scoring_raw.get("min_dimensions_per_iteration", 1),
-            target_dimensions_total=scoring_raw.get("target_dimensions_total", 10),
-            evidence_types=tuple(evidence) if evidence else ScoringConfig.evidence_types,
+            min_dimensions_per_iteration=scoring_raw.get(
+                "min_dimensions_per_iteration",
+                scoring_defaults.min_dimensions_per_iteration,
+            ),
+            target_dimensions_total=scoring_raw.get(
+                "target_dimensions_total",
+                scoring_defaults.target_dimensions_total,
+            ),
+            evidence_types=tuple(evidence) if evidence else scoring_defaults.evidence_types,
         )
 
-        exec_raw = research.get("execution", {})
+        # --- Execution --------------------------------------------------------
+        exec_raw: dict[str, Any] = research.get("execution", {})
+        exec_defaults = ExecutionConfig()
+
+        model = exec_raw.get("model", exec_defaults.model)
+        if model not in VALID_MODELS:
+            raise ValueError(
+                f"Invalid model '{model}'. Must be one of: {', '.join(VALID_MODELS)}"
+            )
+
+        max_budget = exec_raw.get("max_budget_per_call", exec_defaults.max_budget_per_call)
+        if max_budget < 0:
+            raise ValueError(f"max_budget_per_call must be non-negative, got {max_budget}")
+
+        timeout = exec_raw.get("timeout_seconds", exec_defaults.timeout_seconds)
+        if timeout <= 0:
+            raise ValueError(f"timeout_seconds must be positive, got {timeout}")
+
         execution = ExecutionConfig(
-            max_iterations=exec_raw.get("max_iterations", 0),
-            compress_every=exec_raw.get("compress_every", 5),
-            allowed_tools=exec_raw.get("allowed_tools", ExecutionConfig.allowed_tools),
-            max_turns=exec_raw.get("max_turns", 10),
-            timeout_seconds=exec_raw.get("timeout_seconds", 600),
-            model=exec_raw.get("model", "sonnet"),
-            max_budget_per_call=exec_raw.get("max_budget_per_call", 0.50),
+            max_iterations=exec_raw.get("max_iterations", exec_defaults.max_iterations),
+            compress_every=exec_raw.get("compress_every", exec_defaults.compress_every),
+            allowed_tools=exec_raw.get("allowed_tools", exec_defaults.allowed_tools),
+            max_turns=exec_raw.get("max_turns", exec_defaults.max_turns),
+            timeout_seconds=timeout,
+            model=model,
+            max_budget_per_call=max_budget,
         )
 
         return cls(

@@ -241,12 +241,17 @@ class TestCallClaude:
 
 class TestRender:
     def test_renders_template(self, tmp_path, monkeypatch):
-        # Point PROMPTS_DIR to tmp
         import src.orchestrator as orch
         monkeypatch.setattr(orch, "PROMPTS_DIR", tmp_path)
         (tmp_path / "test.md").write_text("Hello {name}, topic: {topic}", encoding="utf-8")
         result = _render("test.md", name="Alice", topic="APIs")
         assert result == "Hello Alice, topic: APIs"
+
+    def test_missing_template_raises(self, tmp_path, monkeypatch):
+        import src.orchestrator as orch
+        monkeypatch.setattr(orch, "PROMPTS_DIR", tmp_path)
+        with pytest.raises(FileNotFoundError, match="Prompt template not found"):
+            _render("nonexistent.md")
 
 
 # ---------------------------------------------------------------------------
