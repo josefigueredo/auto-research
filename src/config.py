@@ -30,6 +30,7 @@ class ExecutionConfig:
     max_turns: int = 10
     timeout_seconds: int = 600
     model: str = "sonnet"  # "sonnet", "opus", or "haiku"
+    max_budget_per_call: float = 0.50  # USD cap per claude invocation
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,7 @@ class ResearchConfig:
             max_turns=exec_raw.get("max_turns", 10),
             timeout_seconds=exec_raw.get("timeout_seconds", 600),
             model=exec_raw.get("model", "sonnet"),
+            max_budget_per_call=exec_raw.get("max_budget_per_call", 0.50),
         )
 
         return cls(

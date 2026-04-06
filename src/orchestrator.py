@@ -93,12 +93,15 @@ def call_claude(
     max_turns: int = 10,
     timeout: int = 300,
     json_schema: dict | None = None,
+    max_budget_usd: float = 0.0,
 ) -> ClaudeResponse:
     """Invoke Claude Code CLI in headless mode and return the result."""
     cmd: list[str] = ["claude", "-p", prompt, "--output-format", "json"]
 
     if model:
         cmd.extend(["--model", model])
+    if max_budget_usd > 0:
+        cmd.extend(["--max-budget-usd", str(max_budget_usd)])
     if allowed_tools:
         cmd.extend(["--allowedTools", allowed_tools])
     if max_turns:
@@ -205,6 +208,13 @@ class AutoResearcher:
         self._dimension_attempts: dict[str, int] = {}
 
     MAX_ATTEMPTS_PER_DIMENSION = 3
+
+    def _call(self, prompt: str, **kwargs) -> ClaudeResponse:
+        """Call Claude with this researcher's model and budget defaults."""
+        kwargs.setdefault("model", self.config.execution.model)
+        kwargs.setdefault("max_budget_usd", self.config.execution.max_budget_per_call)
+        kwargs.setdefault("timeout", self.config.execution.timeout_seconds)
+        return call_claude(prompt, **kwargs)
 
     # -- Public API --------------------------------------------------------
 
@@ -365,12 +375,7 @@ class AutoResearcher:
             unexplored_dimensions=self._format_dimension_list(unexplored),
         )
 
-        resp = call_claude(
-            prompt,
-            model=self.config.execution.model,
-            max_turns=3,
-            timeout=self.config.execution.timeout_seconds,
-        )
+        resp = self._call(prompt, max_turns=3)
 
         if resp.is_error or not resp.text:
             return None
@@ -408,12 +413,10 @@ class AutoResearcher:
             knowledge_summary=self._kb_summary(),
         )
 
-        resp = call_claude(
+        resp = self._call(
             prompt,
-            model=self.config.execution.model,
             allowed_tools=self.config.execution.allowed_tools,
             max_turns=self.config.execution.max_turns,
-            timeout=self.config.execution.timeout_seconds,
         )
 
         self.total_cost += resp.cost_usd
@@ -443,12 +446,7 @@ class AutoResearcher:
                 knowledge_summary=self._kb_summary(),
             )
 
-            resp = call_claude(
-                prompt,
-                model=self.config.execution.model,
-                max_turns=3,
-                timeout=self.config.execution.timeout_seconds,
-            )
+            resp = self._call(prompt, max_turns=3)
             self.total_cost += resp.cost_usd
 
             if not resp.is_error and resp.text:
@@ -581,7 +579,7 @@ class AutoResearcher:
             f"{self.knowledge_base}"
         )
 
-        resp = call_claude(prompt, model=self.config.execution.model, max_turns=3, timeout=120)
+        resp = self._call(prompt, max_turns=3, timeout=120)
         self.total_cost += resp.cost_usd
 
         if not resp.is_error and resp.text and len(resp.text) > 200:
@@ -606,12 +604,7 @@ class AutoResearcher:
         )
 
         log.info("Generating final synthesis report...")
-        resp = call_claude(
-            prompt,
-            model=self.config.execution.model,
-            max_turns=5,
-            timeout=self.config.execution.timeout_seconds,
-        )
+        resp = self._call(prompt, max_turns=5)
         self.total_cost += resp.cost_usd
 
         if not resp.is_error and resp.text:
