@@ -95,8 +95,11 @@ def call_claude(
     json_schema: dict | None = None,
     max_budget_usd: float = 0.0,
 ) -> ClaudeResponse:
-    """Invoke Claude Code CLI in headless mode and return the result."""
-    cmd: list[str] = ["claude", "-p", prompt, "--output-format", "json"]
+    """Invoke Claude Code CLI in headless mode and return the result.
+
+    Uses stdin pipe for prompts to avoid Windows command-line length limits (~32KB).
+    """
+    cmd: list[str] = ["claude", "-p", "-", "--output-format", "json"]
 
     if model:
         cmd.extend(["--model", model])
@@ -109,11 +112,12 @@ def call_claude(
     if json_schema:
         cmd.extend(["--json-schema", json.dumps(json_schema)])
 
-    log.debug("Claude CLI: %s", " ".join(cmd[:6]) + " ...")
+    log.debug("Claude CLI: %s (prompt: %d chars)", " ".join(cmd[:6]), len(prompt))
 
     try:
         result = subprocess.run(
             cmd,
+            input=prompt,
             capture_output=True,
             text=True,
             timeout=timeout,
