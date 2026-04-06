@@ -1,7 +1,7 @@
 [project]
-name = "autoresearch-claude"
-version = "0.1.0"
-description = "Autonomous research framework powered by Claude Code agents"
+name = "autoresearch"
+version = "0.2.0"
+description = "Autonomous research framework powered by AI coding agent CLIs"
 requires-python = ">=3.10"
 dependencies = [
     "pyyaml>=6.0",

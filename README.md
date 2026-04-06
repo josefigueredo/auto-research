@@ -1,9 +1,9 @@
-# Autoresearch with Claude
+# Autoresearch
 
-Autonomous research framework powered by Claude Code agents.
+Autonomous research framework powered by AI coding agent CLIs.
 Adapts [Karpathy's autoresearch pattern](https://github.com/karpathy/autoresearch)
 — replacing GPU training runs with LLM agent calls for deep, iterative research
-on any topic.
+on any topic. Supports **Claude**, **Codex**, **Gemini**, and **Copilot** backends.
 
 ## The Pattern
 
@@ -13,8 +13,8 @@ same loop to knowledge research:
 
 ```plaintext
 LOOP FOREVER:
-  1. Hypothesis  — Claude picks the next dimension to investigate
-  2. Execute     — Claude researches it (web search, docs, analysis)
+  1. Hypothesis  — Agent picks the next dimension to investigate
+  2. Execute     — Agent researches it (web search, docs, analysis)
   3. Score       — Heuristic + LLM judge evaluate findings
   4. Decide      — Score improved? KEEP and merge. Otherwise: DISCARD.
   5. Log         — Append to results.tsv, save iteration file
@@ -31,7 +31,7 @@ beat the current best are merged into a growing knowledge base. On exit
 
 ```mermaid
 flowchart TD
-    START([cli.py --config topic.yaml]) --> INIT[Load config + check claude CLI]
+    START([cli.py --config topic.yaml]) --> INIT[Load config + check backend CLI]
     INIT --> CHECK{--resume flag?}
     CHECK -->|Yes| RESUME[Rebuild state from<br>iterations/ + results.tsv]
     CHECK -->|No| FRESH[Initialize empty<br>knowledge base]
@@ -41,12 +41,12 @@ flowchart TD
     LOOP[[INFINITE LOOP]] --> HYPO
 
     subgraph ITERATION ["Each Iteration (~3 agent calls)"]
-        HYPO[1. HYPOTHESIS<br>claude -p - &#60;stdin<br>Pick next dimension]
+        HYPO[1. HYPOTHESIS<br>backend.invoke&#40;prompt&#41;<br>Pick next dimension]
         HYPO --> EXHAUST{Dimension<br>exhausted?}
         EXHAUST -->|Yes, 3+ attempts| SKIP_DIM[Skip, mark explored]
         EXHAUST -->|No| EXEC
         SKIP_DIM --> HYPO
-        EXEC[2. EXECUTE<br>claude --model sonnet<br>WebSearch + WebFetch]
+        EXEC[2. EXECUTE<br>backend.invoke&#40;prompt + tools&#41;<br>WebSearch + WebFetch]
         EXEC --> CRASH{Crash?}
         CRASH -->|Yes| LOG_CRASH[Log crash<br>Track attempt count]
         CRASH -->|No| SCORE
@@ -154,7 +154,7 @@ uv run python -m src.cli --config configs/aws_api_gateway.yaml --synthesize
 ## Project Structure
 
 ```plaintext
-autoresearch-claude/
+autoresearch/
     src/
         cli.py              Entry point (--config, --backend, --resume, --synthesize)
         config.py           YAML config loader with frozen dataclasses
@@ -338,7 +338,7 @@ The included demo config (`configs/aws_api_gateway.yaml`) was run to completion:
 - Dimensions covered: REST vs HTTP API, WebSocket API, authentication,
   rate limiting, integration patterns, observability, deployment, cost modeling
 - Final synthesis: 400+ lines, architect-grade comparison report
-- Total cost: ~$2 in Claude API usage
+- Total cost: ~$2 (run with Claude backend)
 
 ```bash
 uv run python -m src.cli --config configs/aws_api_gateway.yaml --synthesize
