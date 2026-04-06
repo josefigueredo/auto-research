@@ -25,9 +25,9 @@ research:
   execution:
     max_iterations: 1
     compress_every: 99
-    allowed_tools: "WebSearch,WebFetch,Read"
-    max_turns: 5
+    allowed_tools: ""
+    max_turns: 3
     backend: claude
     model: sonnet
-    max_budget_per_call: 0.25
-    timeout_seconds: 120
+    max_budget_per_call: 2.00
+    timeout_seconds: 300
