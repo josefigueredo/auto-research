@@ -40,7 +40,7 @@ flowchart TD
 
     LOOP[[INFINITE LOOP]] --> HYPO
 
-    subgraph ITERATION ["Each Iteration (~3 Claude calls)"]
+    subgraph ITERATION ["Each Iteration (~3 agent calls)"]
         HYPO[1. HYPOTHESIS<br>claude -p - &#60;stdin<br>Pick next dimension]
         HYPO --> EXHAUST{Dimension<br>exhausted?}
         EXHAUST -->|Yes, 3+ attempts| SKIP_DIM[Skip, mark explored]
@@ -87,7 +87,7 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     participant O as orchestrator.py
-    participant C as Claude CLI<br>(stdin pipe)
+    participant C as AI CLI Backend<br>(stdin or argument)
     participant FS as File System
 
     O->>FS: Read knowledge_base.md
@@ -95,20 +95,20 @@ sequenceDiagram
 
     Note over O: Render prompt template<br>with knowledge summary
 
-    O->>C: echo prompt | claude -p -<br>--model sonnet --max-budget-usd 0.50
+    O->>C: backend.invoke(prompt, opts)
     C-->>O: JSON: {dimension, questions, approach}
 
     O->>O: Check dimension attempt count
 
     O->>FS: Read prompts/research.md
-    O->>C: echo prompt | claude -p -<br>--model sonnet --allowedTools WebSearch,...
+    O->>C: backend.invoke(prompt, opts + tools)
     Note over C: Agent searches web,<br>fetches docs, cross-references
     C-->>O: Markdown findings
 
     O->>O: Heuristic score (regex patterns, counting)
 
     O->>FS: Read prompts/evaluate.md
-    O->>C: echo prompt | claude -p -<br>--model sonnet (judge call)
+    O->>C: backend.invoke(prompt, opts)
     C-->>O: JSON: {depth, accuracy, novelty, actionability}
 
     O->>O: Combine: 0.4 * heuristic + 0.6 * judge
@@ -129,26 +129,36 @@ sequenceDiagram
 ```bash
 uv sync
 
+# Run with Claude (default backend)
 uv run python -m src.cli --config configs/aws_api_gateway.yaml
 
+# Run with a different backend
+uv run python -m src.cli --config configs/aws_api_gateway.yaml --backend codex
+
+# Resume a previous session
 uv run python -m src.cli --config configs/aws_api_gateway.yaml --resume
 
+# Generate synthesis from existing iterations
 uv run python -m src.cli --config configs/aws_api_gateway.yaml --synthesize
 ```
 
 ## Requirements
 
 - Python 3.10+
-- [Claude Code CLI](https://claude.ai/download) installed and authenticated
-- `claude --version` must work from the terminal
+- At least one supported AI coding CLI installed and authenticated:
+  - [Claude Code](https://claude.ai/download) (`claude`)
+  - [OpenAI Codex](https://developers.openai.com/codex) (`codex`)
+  - [Google Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini`)
+  - [GitHub Copilot CLI](https://docs.github.com/en/copilot) (`copilot`)
 
 ## Project Structure
 
 ```plaintext
 autoresearch-claude/
     src/
-        cli.py              Entry point (--config, --resume, --synthesize, -v)
+        cli.py              Entry point (--config, --backend, --resume, --synthesize)
         config.py           YAML config loader with frozen dataclasses
+        backend.py          Backend ABC + Claude, Codex, Gemini, Copilot implementations
         orchestrator.py     AutoResearcher class — the infinite loop
         scorer.py           Heuristic scoring + LLM-as-judge
     configs/
@@ -159,7 +169,7 @@ autoresearch-claude/
         research.md         Deep research with web search tools
         evaluate.md         LLM judge: depth, accuracy, novelty, actionability
         synthesize.md       Final report generation
-    tests/                  Test suite (pytest, 99 tests)
+    tests/                  Test suite (pytest, 119 tests)
     output/                 Runtime artifacts (gitignored)
         <config-name>/
             results.tsv         Experiment log (TSV)
@@ -181,7 +191,8 @@ autoresearch-claude/
         - "First dimension to explore"
         - "Second dimension to explore"
       execution:
-        model: sonnet
+        backend: claude        # claude, codex, gemini, or copilot
+        model: sonnet          # see model reference below
         max_iterations: 0
         max_turns: 10
         max_budget_per_call: 0.50
@@ -198,16 +209,26 @@ autoresearch-claude/
 | `topic` | (required) | The research question |
 | `goal` | same as topic | Description of desired output |
 | `dimensions` | `[]` | Dimensions to explore |
-| `model` | `sonnet` | Claude model: `sonnet`, `opus`, or `haiku` |
+| `backend` | `claude` | CLI backend: `claude`, `codex`, `gemini`, or `copilot` |
+| `model` | `sonnet` | Model name (backend-specific, see table below) |
 | `max_iterations` | `0` | Max iterations (`0` = infinite) |
 | `max_turns` | `10` | Agent turns per research call |
-| `max_budget_per_call` | `0.50` | USD cap per Claude invocation |
+| `max_budget_per_call` | `0.50` | USD cap per invocation (Claude only) |
 | `timeout_seconds` | `600` | Timeout per invocation in seconds |
 | `compress_every` | `5` | Compress knowledge base every N iterations |
 | `allowed_tools` | `WebSearch,...` | Tools available to the research agent |
 | `min_dimensions_per_iteration` | `1` | Min dimensions expected per iteration |
 | `target_dimensions_total` | `10` | Target total dimensions to cover |
 | `evidence_types` | see template | Evidence types for heuristic scoring |
+
+### Models by Backend
+
+| Backend | Top Model | Recommended | Budget |
+|---------|-----------|-------------|--------|
+| **claude** | `opus` | `sonnet` | `haiku` |
+| **codex** | `gpt-5.4` | `gpt-5.4-mini` | `gpt-5.3-codex` |
+| **gemini** | `gemini-3.1-pro-preview` | `gemini-3-flash-preview` | `gemini-2.5-flash` |
+| **copilot** | `claude-opus-4.6` | `claude-sonnet-4.6` | `gpt-5.4-mini` |
 
 ## How Scoring Works
 
@@ -245,7 +266,7 @@ flowchart LR
 - New questions discovered
 - Substantive word count
 
-**LLM Judge (60%)** — qualitative, via a separate Claude call:
+**LLM Judge (60%)** — qualitative, via a separate agent call:
 - Depth (1-10): beyond surface-level feature lists?
 - Accuracy (1-10): verifiable facts, qualified claims?
 - Novelty (1-10): new information vs prior knowledge base?
@@ -259,7 +280,7 @@ file is saved but findings are not merged (**DISCARD**).
 
 ```mermaid
 flowchart TD
-    CALL[Claude CLI call] --> RC{Return code}
+    CALL[Backend CLI call] --> RC{Return code}
     RC -->|rc=0| PARSE[Parse JSON response]
     RC -->|rc=1| CHECK_RL{Rate limit<br>in stdout?}
 
@@ -288,8 +309,8 @@ flowchart TD
 
 - **Crash recovery**: Dimensions are retried up to 3 times, then skipped.
 - **Resume**: `--resume` rebuilds state from existing iteration files and TSV.
-- **Rate limiting**: Detects Claude CLI rate limit events, backs off 30-120s.
-- **Budget cap**: `--max-budget-usd` on every Claude call prevents runaway costs.
+- **Rate limiting**: Detects rate limit events (Claude), backs off 30-120s.
+- **Budget cap**: `--max-budget-usd` per call prevents runaway costs (Claude).
 - **Large prompts**: Piped via stdin to avoid the Windows 32KB command-line limit.
 - **Graceful shutdown**: `Ctrl+C` generates a synthesis report before exiting.
 - **Config validation**: Model, budget, timeout, and required fields are validated
@@ -300,13 +321,13 @@ flowchart TD
 | Karpathy's autoresearch | This framework |
 |-------------------------|----------------|
 | `train.py` (model code) | Research config YAML |
-| `uv run train.py` | `claude -p - --model sonnet` |
+| `uv run train.py` | `<backend> -p - --model <model>` |
 | `val_bpb` (lower = better) | `total_score` (higher = better) |
 | `git commit` / `git reset` | Merge / skip findings in knowledge base |
 | `results.tsv` | `results.tsv` (same pattern, research metrics) |
 | `program.md` | Orchestrator + prompt templates |
 | 5-minute time budget | `--max-turns` + `--timeout` per call |
-| Single GPU | Claude Code CLI (no hardware required) |
+| Single GPU | Any supported AI CLI (no hardware required) |
 
 ## Demo Results: AWS API Gateway
 
@@ -330,7 +351,7 @@ uv sync --group dev
 uv run pytest tests/ -v
 ```
 
-99 tests covering all modules (config, scorer, orchestrator, cli).
+119 tests covering all modules (backend, config, scorer, orchestrator, cli).
 
 ## Related Projects
 

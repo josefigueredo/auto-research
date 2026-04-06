@@ -25,7 +25,33 @@ research:
     max_iterations: 0       # 0 = infinite
     compress_every: 5       # compress knowledge base every N iterations
     allowed_tools: "WebSearch,WebFetch,Read,Bash,Glob,Grep"
-    max_turns: 10           # max claude agent turns per research call
-    backend: claude             # "claude", "codex", "gemini", or "copilot"
-    model: sonnet               # model name (backend-specific)
-    timeout_seconds: 600        # timeout per claude invocation
+    max_turns: 10           # max agent turns per research call
+    timeout_seconds: 600    # timeout per invocation
+
+    backend: claude         # "claude", "codex", "gemini", or "copilot"
+    model: sonnet           # model name (backend-specific, see below)
+
+    # ---------------------------------------------------------------
+    # Available models per backend
+    # ---------------------------------------------------------------
+    #
+    # claude (Anthropic Claude Code CLI):
+    #   Top:         opus          (claude-opus-4.6)
+    #   Recommended: sonnet        (claude-sonnet-4.6) <-- default
+    #   Budget:      haiku         (claude-haiku-4.5)
+    #
+    # codex (OpenAI Codex CLI):
+    #   Top:         gpt-5.4
+    #   Recommended: gpt-5.4-mini
+    #   Coding:      gpt-5.3-codex
+    #
+    # gemini (Google Gemini CLI):
+    #   Top:         gemini-3.1-pro-preview
+    #   Recommended: gemini-3-flash-preview
+    #   Previous:    gemini-2.5-pro
+    #
+    # copilot (GitHub Copilot CLI — supports multiple providers):
+    #   OpenAI:      gpt-5.4 / gpt-5.4-mini
+    #   Anthropic:   claude-opus-4.6 / claude-sonnet-4.6
+    #   Google:      gemini-3.1-pro / gemini-3-flash
+    # ---------------------------------------------------------------
