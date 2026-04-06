@@ -335,4 +335,3 @@ uv run pytest tests/ -v
 ## Related Projects
 
 - [karpathy/autoresearch](https://github.com/karpathy/autoresearch) — the original GPU-based framework
-- [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) — Windows RTX adaptation for consumer GPUs
