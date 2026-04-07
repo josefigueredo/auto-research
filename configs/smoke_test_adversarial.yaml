@@ -1,4 +1,5 @@
-# Smoke test for Gemini backend.
+# Smoke test for adversarial strategy (codex researches, claude critiques).
+# Codex does the research, claude writes a critique, claude judges.
 
 research:
   topic: "What are three pros and cons of Python?"
@@ -18,7 +19,18 @@ research:
     compress_every: 99
     allowed_tools: ""
     max_turns: 2
-    backend: gemini
-    model: gemini-2.5-flash
+    backend: claude
+    model: sonnet
     max_budget_per_call: 1.00
     timeout_seconds: 120
+
+    strategy: adversarial
+    backends:
+      primary: claude
+      research:
+        - codex
+        - claude
+      judge: claude
+      utility: claude
+    strategy_config:
+      critique_depth: standard

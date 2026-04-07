@@ -1,4 +1,5 @@
-# Smoke test for Gemini backend.
+# Smoke test for specialist strategy (routes dimensions to claude or codex).
+# Code-heavy dimensions go to codex, reasoning-heavy to claude.
 
 research:
   topic: "What are three pros and cons of Python?"
@@ -18,7 +19,16 @@ research:
     compress_every: 99
     allowed_tools: ""
     max_turns: 2
-    backend: gemini
-    model: gemini-2.5-flash
+    backend: claude
+    model: sonnet
     max_budget_per_call: 1.00
     timeout_seconds: 120
+
+    strategy: specialist
+    backends:
+      primary: claude
+      research:
+        - claude
+        - codex
+      judge: claude
+      utility: claude
