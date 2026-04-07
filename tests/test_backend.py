@@ -204,8 +204,8 @@ class TestGeminiBackend:
     def test_name(self):
         assert self.backend.name == "gemini"
 
-    def test_prompt_mode_argument(self):
-        assert self.backend.prompt_mode() == PromptMode.ARGUMENT
+    def test_prompt_mode_stdin(self):
+        assert self.backend.prompt_mode() == PromptMode.STDIN
 
     def test_build_command(self):
         opts = CallOptions(model="gemini-2.5-pro", allowed_tools="WebSearch")

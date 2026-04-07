@@ -97,6 +97,7 @@ class AutoResearcher:
 
         self.iteration: int = 0
         self.best_score: float = 0.0
+        self.best_scores: dict[str, float] = {}
         self.knowledge_base: str = ""
         self.explored_dimensions: list[str] = []
         self.total_cost: float = 0.0
@@ -183,10 +184,15 @@ class AutoResearcher:
                             score = float(row.get("total_score", 0))
                         except (ValueError, TypeError):
                             score = 0.0
+                        
+                        if dim:
+                            if score > self.best_scores.get(dim, 0.0):
+                                self.best_scores[dim] = score
+                            if dim not in self.explored_dimensions:
+                                self.explored_dimensions.append(dim)
+                        
                         if score > self.best_score:
                             self.best_score = score
-                        if dim and dim not in self.explored_dimensions:
-                            self.explored_dimensions.append(dim)
 
                     if dim and self._dimension_attempts.get(dim, 0) >= self.MAX_ATTEMPTS_PER_DIMENSION:
                         if dim not in self.explored_dimensions:
@@ -227,17 +233,23 @@ class AutoResearcher:
             return
 
         score = self._score(dimension, findings)
+        prev_best = self.best_scores.get(dimension, 0.0)
         log.info(
-            "Scores — coverage: %.1f, quality: %.1f, total: %.1f (best: %.1f)",
+            "Scores — coverage: %.1f, quality: %.1f, total: %.1f (dim best: %.1f, global best: %.1f)",
             score.coverage,
             score.quality,
             score.total,
+            prev_best,
             self.best_score,
         )
 
-        kept = score.total > self.best_score
+        # Keep if it beats the previous best for THIS dimension, and is above a quality floor
+        kept = score.total > prev_best and score.total >= 30.0
         if kept:
-            self.best_score = score.total
+            self.best_scores[dimension] = score.total
+            if score.total > self.best_score:
+                self.best_score = score.total
+            
             self._merge_findings(dimension, findings, score)
             log.info("KEEP — merged into knowledge base.")
         else:

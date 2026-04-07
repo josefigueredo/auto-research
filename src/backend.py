@@ -504,8 +504,8 @@ class CodexBackend(Backend):
 class GeminiBackend(Backend):
     """Google Gemini CLI backend.
 
-    Uses ``-p`` for prompt delivery.  Supports JSON and JSONL output.
-    Budget and turn limits are configured globally.
+    Uses stdin for prompt delivery with ``-p ""``.  The ``-p`` flag
+    triggers headless mode while stdin provides the actual prompt text.
     """
 
     name = "gemini"
@@ -514,10 +514,10 @@ class GeminiBackend(Backend):
         return "gemini"
 
     def prompt_mode(self) -> PromptMode:
-        return PromptMode.ARGUMENT
+        return PromptMode.STDIN
 
     def build_command(self, opts: CallOptions) -> list[str]:
-        cmd = ["gemini", "-p"]
+        cmd = ["gemini", "-p", ""]
         if opts.model and opts.model not in _CLAUDE_SHORTNAMES:
             cmd.extend(["--model", opts.model])
         cmd.extend(["--output-format", "json"])

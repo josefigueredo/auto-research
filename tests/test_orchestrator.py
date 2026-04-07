@@ -142,6 +142,7 @@ class TestAutoResearcherSetup:
         researcher._resume()
         assert researcher.iteration == 2
         assert researcher.best_score == 74.0
+        assert researcher.best_scores["Dim A"] == 74.0
         assert "Dim A" in researcher.explored_dimensions
         assert len(researcher.results) == 2
 
