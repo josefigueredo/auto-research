@@ -21,4 +21,4 @@ research:
     backend: codex
     model: gpt-5.4
     max_budget_per_call: 1.00
-    timeout_seconds: 180
+    timeout_seconds: 300
