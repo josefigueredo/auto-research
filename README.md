@@ -185,10 +185,10 @@ uv run python -m src.cli --config configs/aws_api_gateway.yaml --synthesize
 
 - Python 3.10+
 - At least one supported AI coding CLI installed and authenticated:
-  - [Claude Code](https://claude.ai/download) (`claude`)
+  - [Claude Code](https://claude.ai/download) (`claude`) -- recommended
   - [OpenAI Codex](https://developers.openai.com/codex) (`codex`)
   - [Google Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini`)
-  - [GitHub Copilot CLI](https://docs.github.com/en/copilot) (`copilot`)
+  - [GitHub Copilot CLI](https://docs.github.com/en/copilot) (`copilot`) -- install via `npm install -g @github/copilot`
 
 ## Project Structure
 
@@ -197,18 +197,24 @@ autoresearch/
     src/
         cli.py              Entry point (--config, --backend, --strategy, --resume, --synthesize)
         config.py           YAML config loader with frozen dataclasses
-        backend.py          Backend ABC + Claude, Codex, Gemini, Copilot implementations
-        orchestrator.py     AutoResearcher class — the infinite loop
+        orchestrator.py     AutoResearcher class — the infinite loop + model translation
         scorer.py           Heuristic scoring + LLM-as-judge
         strategy.py         Multi-backend strategies (ensemble, adversarial, serial, etc.)
+        prompts.py          Template loading and rendering
+        backends/
+            __init__.py     Re-exports all public symbols
+            types.py        PromptMode, CallOptions, AgentResponse, BackendCapabilities
+            base.py         Backend ABC, subprocess management, Windows process kill
+            claude.py       ClaudeBackend (rate limits, budget caps, salvage)
+            codex.py        CodexBackend
+            gemini.py       GeminiBackend
+            copilot.py      CopilotBackend
+            jsonl.py        Shared JSONL parser
+            registry.py     get_backend(), get_backends()
     configs/
         aws_api_gateway.yaml        Demo: AWS API Gateway comparison
         _template.yaml              Copy this for new research topics
-        smoke_test_claude.yaml      Single-backend smoke tests
-        smoke_test_ensemble.yaml    Multi-backend smoke tests
-        smoke_test_adversarial.yaml
-        smoke_test_serial.yaml
-        smoke_test_specialist.yaml
+        smoke_test_*.yaml           Per-backend and per-strategy smoke tests
     prompts/
         hypothesis.md       Picks next dimension to explore (returns JSON)
         research.md         Deep research with web search tools
@@ -217,7 +223,13 @@ autoresearch/
         critique.md         Adversarial critique of findings
         refine.md           Serial refinement of draft findings
         merge.md            Merge parallel research outputs
-    tests/                  Test suite (pytest, 160 tests)
+    tests/
+        test_backends/      Per-backend tests (independently runnable)
+        test_config.py      Config loading and validation
+        test_orchestrator.py  Research loop, scoring, resume
+        test_strategy.py    Multi-backend strategy logic
+        test_scorer.py      Heuristic + judge scoring
+        test_cli.py         CLI argument parsing
     output/                 Runtime artifacts (gitignored)
         <config-name>/
             results.tsv         Experiment log (TSV)
@@ -274,14 +286,59 @@ autoresearch/
 | `target_dimensions_total` | `10` | Target total dimensions to cover |
 | `evidence_types` | see template | Evidence types for heuristic scoring |
 
-### Models by Backend
+### Backends: Models, Capabilities, and Limitations
 
-| Backend | Top Model | Recommended | Budget |
-|---------|-----------|-------------|--------|
-| **claude** | `opus` | `sonnet` | `haiku` |
-| **codex** | `gpt-5.4` | `gpt-5.4-mini` | `gpt-5.3-codex` |
-| **gemini** | `gemini-3.1-pro-preview` | `gemini-3-flash-preview` | `gemini-2.5-flash` |
-| **copilot** | `claude-opus-4.6` | `claude-sonnet-4.6` | `gpt-5.4-mini` |
+Each backend declares its capabilities via `BackendCapabilities`. The
+orchestrator automatically translates Claude model shortnames (`sonnet`,
+`opus`, `haiku`) to each backend's default model.
+
+| Backend | Default Model | Prompt Mode | JSON Schema | Budget Cap | Rate Limit Detection |
+|---------|--------------|-------------|-------------|------------|---------------------|
+| **claude** | `sonnet` | stdin | Yes | Yes | Yes |
+| **codex** | `gpt-5.4` | stdin | No | No | No |
+| **gemini** | `gemini-2.5-flash` | stdin | No | No | No |
+| **copilot** | `gpt-4.1` | argument | No | No | No |
+
+#### Backend-Specific Notes
+
+**Claude** (recommended for single-backend use):
+- Full-featured: JSON schema, per-call budget, rate limit backoff, result salvage
+- Models: `opus`, `sonnet` (default), `haiku`
+- Smoke test: score 82.0, needs `timeout_seconds: 300`
+
+**Codex**:
+- Uses `codex exec --json` with stdin prompt delivery
+- Models: `gpt-5.4` (default via `~/.codex/config.toml`). Set `features.remote_models = true` for full model list
+- Smoke test: score 76.0, full loop + synthesis
+- Note: model availability varies by account type (ChatGPT vs API)
+
+**Gemini**:
+- Uses `gemini -p ""` with stdin for prompt delivery
+- Models: `gemini-2.5-flash` (default), `gemini-2.5-pro`
+- Limitation: free tier has aggressive rate limits. The CLI retries
+  internally with exponential backoff, consuming the subprocess timeout.
+  Works when not rate-limited
+- Recommended: use with a paid API key or as a secondary research backend
+  in multi-backend strategies where timeouts are tolerable
+
+**Copilot**:
+- Uses `copilot -p "prompt"` (argument mode, not stdin)
+- Models: `gpt-4.1` (default). Supports multiple providers (OpenAI, Anthropic, Google)
+- Install: `npm install -g @github/copilot`
+- Limitation: copilot is a **coding agent** — it always tries to explore
+  files and run commands. It cannot reliably return structured JSON for
+  hypothesis/evaluate phases. **Use only as a research execution backend**
+  in multi-backend strategies (ensemble, serial) where Claude handles
+  hypothesis + judging
+
+#### Single-Backend Smoke Test Results
+
+| Backend | Hypothesis | Research | Judge | Score | Status |
+|---------|-----------|----------|-------|-------|--------|
+| claude | JSON output | Markdown findings | JSON scores | 82.0 | Full loop + synthesis |
+| codex | JSON output | Markdown findings | JSON scores | 76.0 | Full loop + synthesis |
+| gemini | JSON output | Rate-limited | — | — | Fails on free tier |
+| copilot | Prose (no JSON) | N/A | N/A | — | Cannot do structured phases |
 
 ## How Scoring Works
 
@@ -507,8 +564,17 @@ flowchart TD
 - **Budget cap**: `--max-budget-usd` per call prevents runaway costs (Claude).
 - **Large prompts**: Piped via stdin to avoid the Windows 32KB command-line limit.
 - **Graceful shutdown**: `Ctrl+C` generates a synthesis report before exiting.
-- **Config validation**: Model, budget, timeout, and required fields are validated
-  on load with clear error messages.
+- **Windows process kill**: Uses `CREATE_NEW_PROCESS_GROUP` + `taskkill /T`
+  to reliably kill child `node` processes on timeout (npm-installed CLIs
+  like codex, gemini, copilot spawn node subprocesses that
+  `subprocess.run(timeout=...)` cannot kill).
+- **Model translation**: Automatically maps Claude shortnames (`sonnet`,
+  `opus`, `haiku`) to each backend's native default model in multi-backend
+  strategies.
+- **Judge validation**: Warns if the judge backend is also a research
+  backend (compromises blind review).
+- **Config validation**: Model, budget, timeout, strategy, backend names,
+  and required fields are validated on load with clear error messages.
 
 ## Mapping to the Original
 
@@ -545,7 +611,8 @@ uv sync --group dev
 uv run pytest tests/ -v
 ```
 
-160 tests covering all modules (backend, config, scorer, orchestrator, cli, strategy).
+189 tests covering all modules (backends, config, scorer, orchestrator, cli, strategy).
+Each backend has independent tests: `uv run pytest tests/test_backends/test_claude.py`
 
 ## Related Projects
 

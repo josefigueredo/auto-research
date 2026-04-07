@@ -50,26 +50,29 @@ research:
     #   refiner_sees_draft: true  # serial only
 
     # ---------------------------------------------------------------
-    # Available models per backend
+    # Available models per backend (verified April 2026)
     # ---------------------------------------------------------------
     #
-    # claude (Anthropic Claude Code CLI):
+    # claude (Anthropic Claude Code CLI) — recommended for single-backend:
     #   Top:         opus          (claude-opus-4.6)
     #   Recommended: sonnet        (claude-sonnet-4.6) <-- default
     #   Budget:      haiku         (claude-haiku-4.5)
+    #   Features:    JSON schema, budget cap, rate limit detection, result salvage
     #
     # codex (OpenAI Codex CLI):
-    #   Top:         gpt-5.4
-    #   Recommended: gpt-5.4-mini
-    #   Coding:      gpt-5.3-codex
+    #   Default:     gpt-5.4       (set in ~/.codex/config.toml)
+    #   Note:        Set features.remote_models = true in config.toml
+    #                Model availability varies by account type (ChatGPT vs API)
     #
     # gemini (Google Gemini CLI):
-    #   Top:         gemini-3.1-pro-preview
-    #   Recommended: gemini-3-flash-preview
-    #   Previous:    gemini-2.5-pro
+    #   Default:     gemini-2.5-flash
+    #   Alternative: gemini-2.5-pro
+    #   Caveat:      Free tier has aggressive rate limits — CLI retries
+    #                internally, consuming the timeout budget
     #
-    # copilot (GitHub Copilot CLI — supports multiple providers):
-    #   OpenAI:      gpt-5.4 / gpt-5.4-mini
-    #   Anthropic:   claude-opus-4.6 / claude-sonnet-4.6
-    #   Google:      gemini-3.1-pro / gemini-3-flash
+    # copilot (GitHub Copilot CLI):
+    #   Default:     gpt-4.1
+    #   Install:     npm install -g @github/copilot
+    #   Caveat:      Coding agent — cannot reliably return structured JSON.
+    #                Use only as research backend in multi-backend strategies.
     # ---------------------------------------------------------------
