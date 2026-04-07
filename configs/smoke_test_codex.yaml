@@ -1,0 +1,26 @@
+# Smoke test for Codex backend.
+
+research:
+  topic: "Compare Python and Go for CLI tools"
+  goal: "A short comparison in under 300 words"
+
+  dimensions:
+    - "Language ergonomics and developer experience"
+    - "Binary distribution and startup time"
+
+  scoring:
+    min_dimensions_per_iteration: 1
+    target_dimensions_total: 2
+    evidence_types:
+      - comparison_table
+      - trade_off_analysis
+
+  execution:
+    max_iterations: 1
+    compress_every: 99
+    allowed_tools: ""
+    max_turns: 3
+    backend: codex
+    model: o4-mini
+    max_budget_per_call: 2.00
+    timeout_seconds: 300

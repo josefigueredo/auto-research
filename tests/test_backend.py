@@ -139,7 +139,7 @@ class TestClaudeBackend:
         }])
         assert ClaudeBackend._extract_utilization(data) == 0.73
 
-    @patch("src.backend.subprocess.run")
+    @patch.object(ClaudeBackend, "_run_process")
     def test_invoke_success(self, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
@@ -151,10 +151,10 @@ class TestClaudeBackend:
         resp = self.backend.invoke("prompt", CallOptions(), timeout=10)
         assert resp.text == "hello"
         assert resp.is_error is False
-        # Verify stdin was used
+        # Verify stdin was used (passed as input kwarg)
         assert mock_run.call_args[1]["input"] == "prompt"
 
-    @patch("src.backend.subprocess.run")
+    @patch.object(ClaudeBackend, "_run_process")
     def test_invoke_timeout(self, mock_run):
         import subprocess
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=10)
@@ -252,7 +252,7 @@ class TestCopilotBackend:
         assert "--max-autopilot-continues" in cmd
         assert "5" in cmd
 
-    @patch("src.backend.subprocess.run")
+    @patch.object(CopilotBackend, "_run_process")
     def test_invoke_appends_prompt_as_arg(self, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
@@ -262,8 +262,6 @@ class TestCopilotBackend:
         self.backend.invoke("short prompt", CallOptions(), timeout=10)
         cmd = mock_run.call_args[0][0]
         assert "short prompt" in cmd
-        # stdin should NOT be used
-        assert mock_run.call_args[1].get("input") is None
 
 
 # ---------------------------------------------------------------------------

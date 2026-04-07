@@ -59,78 +59,108 @@ class TestMain:
         result = main(["--config", str(bad)])
         assert result == 1
 
+    def _mock_cli_deps(self):
+        """Return patchers for the three CLI dependencies."""
+        mock_backend = MagicMock()
+        mock_backend.check_available.return_value = True
+        mock_backend.name = "claude"
+        mock_backend.cli_executable.return_value = "claude"
+        mock_strategy = MagicMock()
+        return mock_backend, mock_strategy
+
+    @patch("src.cli.get_strategy")
+    @patch("src.cli.get_backends")
     @patch("src.cli.get_backend")
-    def test_backend_not_available(self, mock_get, config_file):
+    def test_backend_not_available(self, mock_get, mock_get_backends, mock_get_strat, config_file):
         mock_backend = MagicMock()
         mock_backend.check_available.return_value = False
         mock_backend.name = "claude"
         mock_backend.cli_executable.return_value = "claude"
         mock_get.return_value = mock_backend
+        mock_get_backends.return_value = {"claude": mock_backend}
         result = main(["--config", str(config_file)])
         assert result == 1
 
+    @patch("src.cli.get_strategy")
+    @patch("src.cli.get_backends")
     @patch("src.cli.AutoResearcher")
     @patch("src.cli.get_backend")
-    def test_synthesize_mode(self, mock_get, mock_researcher_cls, config_file):
-        mock_backend = MagicMock()
-        mock_backend.check_available.return_value = True
+    def test_synthesize_mode(self, mock_get, mock_researcher_cls, mock_get_backends, mock_get_strat, config_file):
+        mock_backend, mock_strategy = self._mock_cli_deps()
         mock_get.return_value = mock_backend
+        mock_get_backends.return_value = {"claude": mock_backend}
+        mock_get_strat.return_value = mock_strategy
         mock_instance = MagicMock()
         mock_researcher_cls.return_value = mock_instance
         result = main(["--config", str(config_file), "--synthesize"])
         assert result == 0
         mock_instance.synthesize_only.assert_called_once()
 
+    @patch("src.cli.get_strategy")
+    @patch("src.cli.get_backends")
     @patch("src.cli.AutoResearcher")
     @patch("src.cli.get_backend")
-    def test_run_mode(self, mock_get, mock_researcher_cls, config_file):
-        mock_backend = MagicMock()
-        mock_backend.check_available.return_value = True
+    def test_run_mode(self, mock_get, mock_researcher_cls, mock_get_backends, mock_get_strat, config_file):
+        mock_backend, mock_strategy = self._mock_cli_deps()
         mock_get.return_value = mock_backend
+        mock_get_backends.return_value = {"claude": mock_backend}
+        mock_get_strat.return_value = mock_strategy
         mock_instance = MagicMock()
         mock_researcher_cls.return_value = mock_instance
         result = main(["--config", str(config_file)])
         assert result == 0
         mock_instance.run.assert_called_once()
 
+    @patch("src.cli.get_strategy")
+    @patch("src.cli.get_backends")
     @patch("src.cli.AutoResearcher")
     @patch("src.cli.get_backend")
-    def test_backend_flag_overrides_config(self, mock_get, mock_researcher_cls, config_file):
-        mock_backend = MagicMock()
-        mock_backend.check_available.return_value = True
+    def test_backend_flag_overrides_config(self, mock_get, mock_researcher_cls, mock_get_backends, mock_get_strat, config_file):
+        mock_backend, mock_strategy = self._mock_cli_deps()
         mock_get.return_value = mock_backend
+        mock_get_backends.return_value = {"codex": mock_backend}
+        mock_get_strat.return_value = mock_strategy
         mock_researcher_cls.return_value = MagicMock()
         main(["--config", str(config_file), "--backend", "codex"])
         mock_get.assert_called_with("codex")
 
+    @patch("src.cli.get_strategy")
+    @patch("src.cli.get_backends")
     @patch("src.cli.AutoResearcher")
     @patch("src.cli.get_backend")
-    def test_backend_defaults_from_config(self, mock_get, mock_researcher_cls, config_file):
-        mock_backend = MagicMock()
-        mock_backend.check_available.return_value = True
+    def test_backend_defaults_from_config(self, mock_get, mock_researcher_cls, mock_get_backends, mock_get_strat, config_file):
+        mock_backend, mock_strategy = self._mock_cli_deps()
         mock_get.return_value = mock_backend
+        mock_get_backends.return_value = {"claude": mock_backend}
+        mock_get_strat.return_value = mock_strategy
         mock_researcher_cls.return_value = MagicMock()
         main(["--config", str(config_file)])
         mock_get.assert_called_with("claude")
 
+    @patch("src.cli.get_strategy")
+    @patch("src.cli.get_backends")
     @patch("src.cli.AutoResearcher")
     @patch("src.cli.get_backend")
-    def test_custom_output_dir(self, mock_get, mock_researcher_cls, config_file, tmp_path):
-        mock_backend = MagicMock()
-        mock_backend.check_available.return_value = True
+    def test_custom_output_dir(self, mock_get, mock_researcher_cls, mock_get_backends, mock_get_strat, config_file, tmp_path):
+        mock_backend, mock_strategy = self._mock_cli_deps()
         mock_get.return_value = mock_backend
+        mock_get_backends.return_value = {"claude": mock_backend}
+        mock_get_strat.return_value = mock_strategy
         mock_researcher_cls.return_value = MagicMock()
         custom = tmp_path / "custom_out"
         main(["--config", str(config_file), "--output", str(custom)])
         _, kwargs = mock_researcher_cls.call_args
         assert kwargs["output_dir"] == custom.resolve()
 
+    @patch("src.cli.get_strategy")
+    @patch("src.cli.get_backends")
     @patch("src.cli.AutoResearcher")
     @patch("src.cli.get_backend")
-    def test_backend_passed_to_researcher(self, mock_get, mock_researcher_cls, config_file):
-        mock_backend = MagicMock()
-        mock_backend.check_available.return_value = True
+    def test_backend_passed_to_researcher(self, mock_get, mock_researcher_cls, mock_get_backends, mock_get_strat, config_file):
+        mock_backend, mock_strategy = self._mock_cli_deps()
         mock_get.return_value = mock_backend
+        mock_get_backends.return_value = {"claude": mock_backend}
+        mock_get_strat.return_value = mock_strategy
         mock_researcher_cls.return_value = MagicMock()
         main(["--config", str(config_file)])
         _, kwargs = mock_researcher_cls.call_args

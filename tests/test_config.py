@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import ExecutionConfig, ResearchConfig, ScoringConfig
+from src.config import BackendsConfig, ExecutionConfig, ResearchConfig, ScoringConfig, StrategyConfig
 
 
 # ---------------------------------------------------------------------------
@@ -184,3 +184,104 @@ class TestResearchConfigFromYaml:
         cfg = ResearchConfig.from_yaml(minimal_yaml)
         with pytest.raises(AttributeError):
             cfg.topic = "changed"
+
+
+# ---------------------------------------------------------------------------
+# Multi-backend config
+# ---------------------------------------------------------------------------
+
+class TestMultiBackendConfig:
+    def test_defaults(self):
+        bc = BackendsConfig()
+        assert bc.primary == "claude"
+        assert bc.research == ("claude",)
+        assert bc.judge_or_primary == "claude"
+        assert bc.utility_or_primary == "claude"
+
+    def test_all_backend_names(self):
+        bc = BackendsConfig(primary="claude", research=("codex", "gemini"), judge="claude", utility="gemini")
+        names = bc.all_backend_names()
+        assert names == {"claude", "codex", "gemini"}
+
+    def test_strategy_config_defaults(self):
+        sc = StrategyConfig()
+        assert sc.merge_mode == "best"
+        assert sc.merge_threshold == 40.0
+        assert sc.critique_depth == "standard"
+        assert sc.refiner_sees_draft is True
+        assert sc.max_parallel == 3
+        assert sc.stagger_seconds == 5
+
+    def test_backward_compat_single_backend(self, minimal_yaml: Path):
+        cfg = ResearchConfig.from_yaml(minimal_yaml)
+        assert cfg.execution.strategy == "single"
+        assert cfg.execution.backends.primary == "claude"
+        assert cfg.execution.backends.research == ("claude",)
+
+    def test_ensemble_config(self, tmp_path: Path):
+        p = tmp_path / "ensemble.yaml"
+        p.write_text(textwrap.dedent("""\
+            research:
+              topic: "Test ensemble"
+              execution:
+                backend: claude
+                strategy: ensemble
+                backends:
+                  primary: claude
+                  research:
+                    - codex
+                    - gemini
+                  judge: claude
+                  utility: gemini
+                strategy_config:
+                  merge_mode: union
+                  stagger_seconds: 10
+        """), encoding="utf-8")
+        cfg = ResearchConfig.from_yaml(p)
+        assert cfg.execution.strategy == "ensemble"
+        assert cfg.execution.backends.primary == "claude"
+        assert cfg.execution.backends.research == ("codex", "gemini")
+        assert cfg.execution.backends.judge == "claude"
+        assert cfg.execution.backends.utility == "gemini"
+        assert cfg.execution.strategy_config.merge_mode == "union"
+        assert cfg.execution.strategy_config.stagger_seconds == 10
+
+    def test_invalid_strategy_raises(self, tmp_path: Path):
+        p = tmp_path / "bad.yaml"
+        p.write_text(textwrap.dedent("""\
+            research:
+              topic: "Test"
+              execution:
+                strategy: bogus
+        """), encoding="utf-8")
+        with pytest.raises(ValueError, match="Invalid strategy"):
+            ResearchConfig.from_yaml(p)
+
+    def test_invalid_research_backend_raises(self, tmp_path: Path):
+        p = tmp_path / "bad.yaml"
+        p.write_text(textwrap.dedent("""\
+            research:
+              topic: "Test"
+              execution:
+                strategy: ensemble
+                backends:
+                  primary: claude
+                  research:
+                    - chatgpt
+        """), encoding="utf-8")
+        with pytest.raises(ValueError, match="Invalid research backend"):
+            ResearchConfig.from_yaml(p)
+
+    def test_research_as_string(self, tmp_path: Path):
+        p = tmp_path / "str.yaml"
+        p.write_text(textwrap.dedent("""\
+            research:
+              topic: "Test"
+              execution:
+                strategy: single
+                backends:
+                  primary: claude
+                  research: codex
+        """), encoding="utf-8")
+        cfg = ResearchConfig.from_yaml(p)
+        assert cfg.execution.backends.research == ("codex",)

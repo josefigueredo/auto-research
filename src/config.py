@@ -15,6 +15,72 @@ import yaml
 
 from .backend import VALID_BACKENDS
 
+# Valid multi-backend strategy names.
+VALID_STRATEGIES = ("single", "ensemble", "adversarial", "parallel", "serial", "specialist")
+
+
+@dataclass(frozen=True)
+class BackendsConfig:
+    """Role-to-backend mapping for multi-backend strategies.
+
+    Attributes:
+        primary: Backend for hypothesis generation and synthesis.
+        research: Backends used for the execution phase.  In ensemble/parallel
+            strategies multiple backends research independently.
+        judge: Backend used for scoring/evaluation (should differ from
+            research backends to avoid confirmation bias).
+        utility: Backend used for mechanical tasks (compression).
+    """
+
+    primary: str = "claude"
+    research: tuple[str, ...] = ("claude",)
+    judge: str = ""  # empty → falls back to primary
+    utility: str = ""  # empty → falls back to primary
+
+    @property
+    def judge_or_primary(self) -> str:
+        return self.judge or self.primary
+
+    @property
+    def utility_or_primary(self) -> str:
+        return self.utility or self.primary
+
+    def all_backend_names(self) -> set[str]:
+        """Return the set of all backend names referenced in this config."""
+        names = {self.primary, *self.research}
+        if self.judge:
+            names.add(self.judge)
+        if self.utility:
+            names.add(self.utility)
+        return names
+
+
+@dataclass(frozen=True)
+class StrategyConfig:
+    """Strategy-specific settings for multi-backend research.
+
+    Attributes:
+        merge_mode: How to combine results from parallel execution.
+            ``"best"`` keeps only the highest-scoring result.
+            ``"union"`` merges all results that pass the threshold.
+        merge_threshold: Minimum score for a result to be merge-eligible
+            (only used when ``merge_mode="union"``).
+        critique_depth: Depth of adversarial critique.
+            ``"light"`` does a factual spot-check, ``"standard"`` is balanced,
+            ``"thorough"`` is line-by-line.
+        refiner_sees_draft: Whether the refiner backend receives the
+            drafter's output as context (serial strategy).
+        max_parallel: Maximum number of backends to run concurrently.
+        stagger_seconds: Delay between launching parallel backends to
+            reduce simultaneous rate-limit pressure.
+    """
+
+    merge_mode: str = "best"
+    merge_threshold: float = 40.0
+    critique_depth: str = "standard"
+    refiner_sees_draft: bool = True
+    max_parallel: int = 3
+    stagger_seconds: int = 5
 
 
 @dataclass(frozen=True)
@@ -67,6 +133,9 @@ class ExecutionConfig:
     backend: str = "claude"
     model: str = "sonnet"
     max_budget_per_call: float = 0.50
+    strategy: str = "single"
+    backends: BackendsConfig = field(default_factory=BackendsConfig)
+    strategy_config: StrategyConfig = field(default_factory=StrategyConfig)
 
 
 @dataclass(frozen=True)
@@ -156,6 +225,53 @@ class ResearchConfig:
         if timeout <= 0:
             raise ValueError(f"timeout_seconds must be positive, got {timeout}")
 
+        # --- Strategy / multi-backend -----------------------------------------
+        strategy = exec_raw.get("strategy", "single")
+        if strategy not in VALID_STRATEGIES:
+            raise ValueError(
+                f"Invalid strategy '{strategy}'. Must be one of: {', '.join(VALID_STRATEGIES)}"
+            )
+
+        backends_raw: dict[str, Any] = exec_raw.get("backends", {})
+        if backends_raw:
+            research_val = backends_raw.get("research", [backend])
+            if isinstance(research_val, str):
+                research_val = [research_val]
+            for name in research_val:
+                if name not in VALID_BACKENDS:
+                    raise ValueError(f"Invalid research backend '{name}'. Must be one of: {', '.join(VALID_BACKENDS)}")
+            primary = backends_raw.get("primary", backend)
+            if primary not in VALID_BACKENDS:
+                raise ValueError(f"Invalid primary backend '{primary}'. Must be one of: {', '.join(VALID_BACKENDS)}")
+            judge = backends_raw.get("judge", "")
+            if judge and judge not in VALID_BACKENDS:
+                raise ValueError(f"Invalid judge backend '{judge}'. Must be one of: {', '.join(VALID_BACKENDS)}")
+            utility = backends_raw.get("utility", "")
+            if utility and utility not in VALID_BACKENDS:
+                raise ValueError(f"Invalid utility backend '{utility}'. Must be one of: {', '.join(VALID_BACKENDS)}")
+            backends_config = BackendsConfig(
+                primary=primary,
+                research=tuple(research_val),
+                judge=judge,
+                utility=utility,
+            )
+        else:
+            # Backward compat: single backend → populate roles from it
+            backends_config = BackendsConfig(
+                primary=backend,
+                research=(backend,),
+            )
+
+        strat_raw: dict[str, Any] = exec_raw.get("strategy_config", {})
+        strategy_config = StrategyConfig(
+            merge_mode=strat_raw.get("merge_mode", "best"),
+            merge_threshold=strat_raw.get("merge_threshold", 40.0),
+            critique_depth=strat_raw.get("critique_depth", "standard"),
+            refiner_sees_draft=strat_raw.get("refiner_sees_draft", True),
+            max_parallel=strat_raw.get("max_parallel", 3),
+            stagger_seconds=strat_raw.get("stagger_seconds", 5),
+        )
+
         execution = ExecutionConfig(
             max_iterations=exec_raw.get("max_iterations", exec_defaults.max_iterations),
             compress_every=exec_raw.get("compress_every", exec_defaults.compress_every),
@@ -165,6 +281,9 @@ class ResearchConfig:
             backend=backend,
             model=model,
             max_budget_per_call=max_budget,
+            strategy=strategy,
+            backends=backends_config,
+            strategy_config=strategy_config,
         )
 
         return cls(

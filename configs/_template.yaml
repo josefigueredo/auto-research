@@ -32,6 +32,24 @@ research:
     model: sonnet           # model name (backend-specific, see below)
 
     # ---------------------------------------------------------------
+    # Multi-backend strategies (optional — omit for single-backend)
+    # ---------------------------------------------------------------
+    # strategy: ensemble     # single | ensemble | adversarial | parallel | serial | specialist
+    # backends:
+    #   primary: claude      # hypothesis + synthesis (best reasoner)
+    #   research:            # execution phase backends
+    #     - claude
+    #     - codex
+    #   judge: claude        # scoring (should differ from research for blind review)
+    #   utility: gemini      # compression (cheapest available)
+    # strategy_config:
+    #   merge_mode: best     # best (pick highest score) | union (merge all passing)
+    #   merge_threshold: 40.0
+    #   stagger_seconds: 5   # delay between parallel backend launches
+    #   critique_depth: standard  # light | standard | thorough (adversarial only)
+    #   refiner_sees_draft: true  # serial only
+
+    # ---------------------------------------------------------------
     # Available models per backend
     # ---------------------------------------------------------------
     #

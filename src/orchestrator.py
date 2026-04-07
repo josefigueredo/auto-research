@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .backend import AgentResponse, Backend, CallOptions
+from .backend import AgentResponse, Backend, CallOptions, get_backends
 from .config import ResearchConfig
 from .scorer import (
     IterationScore,
@@ -25,6 +25,7 @@ from .scorer import (
     parse_judge_response,
     quality_score_from_judge,
 )
+from .strategy import Strategy, get_strategy
 
 log = logging.getLogger("autoresearch")
 
@@ -76,24 +77,53 @@ class AutoResearcher:
     Mirrors Karpathy's autoresearch pattern:
     Hypothesis -> Execute -> Score -> Keep/Revert -> Log -> Repeat.
 
+    Supports multi-backend strategies: each research phase can use a
+    different backend, and the execution phase can run in parallel
+    across backends.
+
     Args:
         config: Research configuration.
-        backend: CLI backend to use for agent invocations.
+        backend: Default CLI backend (used when strategy is ``"single"``).
         output_dir: Directory for all output artifacts.
+        backends: Optional pre-built backend instances (keyed by name).
+            If ``None``, built from config.
+        strategy: Optional pre-built strategy.  If ``None``, built from config.
     """
 
     MAX_ATTEMPTS_PER_DIMENSION = 3
 
     def __init__(
-        self, config: ResearchConfig, backend: Backend, output_dir: Path
+        self,
+        config: ResearchConfig,
+        backend: Backend,
+        output_dir: Path,
+        backends: dict[str, Backend] | None = None,
+        strategy: Strategy | None = None,
     ) -> None:
         self.config = config
-        self.backend = backend
+        self.backend = backend  # kept for backward compat + summary
         self.output_dir = output_dir
         self.iterations_dir = output_dir / "iterations"
         self.results_path = output_dir / "results.tsv"
         self.kb_path = output_dir / "knowledge_base.md"
         self.synthesis_path = output_dir / "synthesis.md"
+
+        # Multi-backend support
+        if backends is None:
+            all_names = config.execution.backends.all_backend_names()
+            self.backends = get_backends(all_names)
+        else:
+            self.backends = backends
+
+        if strategy is None:
+            self.strategy = get_strategy(
+                config.execution.strategy,
+                config.execution.backends,
+                config.execution.strategy_config,
+                self.backends,
+            )
+        else:
+            self.strategy = strategy
 
         self.iteration: int = 0
         self.best_score: float = 0.0
@@ -101,11 +131,20 @@ class AutoResearcher:
         self.knowledge_base: str = ""
         self.explored_dimensions: list[str] = []
         self.total_cost: float = 0.0
+        self.per_backend_costs: dict[str, float] = {}
         self.results: list[dict[str, str]] = []
         self._dimension_attempts: dict[str, int] = {}
 
     def _call(self, prompt: str, **kwargs: Any) -> AgentResponse:
-        """Invoke the CLI backend with default options from config.
+        """Invoke the default backend with config defaults.
+
+        For backward compatibility.  New code should use ``_call_with``.
+        """
+        backend = kwargs.pop("_backend", self.backend)
+        return self._call_with(backend, prompt, **kwargs)
+
+    def _call_with(self, backend: Backend, prompt: str, **kwargs: Any) -> AgentResponse:
+        """Invoke a specific backend with default options from config.
 
         Keyword arguments override the defaults from ``self.config.execution``.
         """
@@ -116,7 +155,36 @@ class AutoResearcher:
             max_budget_usd=kwargs.pop("max_budget_usd", self.config.execution.max_budget_per_call),
         )
         timeout = kwargs.pop("timeout", self.config.execution.timeout_seconds)
-        return self.backend.invoke(prompt, opts, timeout=timeout)
+        return backend.invoke(prompt, opts, timeout=timeout)
+
+    def _invoke_for_strategy(
+        self,
+        backend: Backend,
+        prompt: str,
+        *,
+        allowed_tools: str = "",
+        max_turns: int = 0,
+        timeout: int = 0,
+    ) -> AgentResponse:
+        """Callback passed to strategies for backend invocation.
+
+        Applies config defaults for any zero/empty values.
+        """
+        return self._call_with(
+            backend,
+            prompt,
+            allowed_tools=allowed_tools or "",
+            max_turns=max_turns or self.config.execution.max_turns,
+            timeout=timeout or self.config.execution.timeout_seconds,
+        )
+
+    def _track_cost(self, cost: float, backend_name: str = "") -> None:
+        """Add cost to total and per-backend tracking."""
+        self.total_cost += cost
+        if backend_name:
+            self.per_backend_costs[backend_name] = (
+                self.per_backend_costs.get(backend_name, 0.0) + cost
+            )
 
     # -- Public API --------------------------------------------------------
 
@@ -127,7 +195,7 @@ class AutoResearcher:
 
         log.info(
             "Starting autoresearch [%s]: %s (%d dimensions configured)",
-            self.backend.name,
+            self.strategy.describe(),
             self.config.topic,
             len(self.config.dimensions),
         )
@@ -289,12 +357,13 @@ class AutoResearcher:
             unexplored_dimensions=self._format_dimension_list(unexplored),
         )
 
-        resp = self._call(prompt, max_turns=3)
+        hypo_backend = self.strategy.get_hypothesis_backend()
+        resp = self._call_with(hypo_backend, prompt, max_turns=3)
 
         if resp.is_error or not resp.text:
             return None
 
-        self.total_cost += resp.cost_usd
+        self._track_cost(resp.cost_usd, hypo_backend.name)
 
         try:
             return json.loads(resp.text)
@@ -317,6 +386,9 @@ class AutoResearcher:
     ) -> str:
         """Run a research agent on the given dimension.
 
+        Delegates to the active strategy, which may run one or multiple
+        backends in parallel/serial.
+
         Returns:
             Markdown findings text, or an empty string on failure.
         """
@@ -331,19 +403,40 @@ class AutoResearcher:
             knowledge_summary=self._kb_summary(),
         )
 
-        resp = self._call(
+        # Pass dimension for specialist routing
+        kwargs: dict[str, Any] = {}
+        if hasattr(self.strategy, 'route_dimension'):
+            kwargs["dimension"] = dimension
+
+        result = self.strategy.execute_research(
             prompt,
+            self._invoke_for_strategy,
             allowed_tools=self.config.execution.allowed_tools,
             max_turns=self.config.execution.max_turns,
+            timeout=self.config.execution.timeout_seconds,
+            **kwargs,
         )
 
-        self.total_cost += resp.cost_usd
+        self._track_cost(result.cost_usd, result.backend_name)
 
-        if resp.is_error:
+        if not result.findings:
             log.error("Research call failed.")
             return ""
 
-        return resp.text
+        # Post-research phase (e.g. adversarial critique)
+        critique = self.strategy.post_research(
+            result.findings, self._invoke_for_strategy,
+            timeout=self.config.execution.timeout_seconds,
+        )
+        if critique:
+            self._track_cost(critique.cost_usd, critique.backend_name)
+            # Append critique as context for the judge
+            result.findings += (
+                f"\n\n---\n\n## Peer Review ({critique.backend_name})\n\n"
+                f"{critique.critique}"
+            )
+
+        return result.findings
 
     # -- Phase 3: Score ----------------------------------------------------
 
@@ -367,8 +460,9 @@ class AutoResearcher:
                 knowledge_summary=self._kb_summary(),
             )
 
-            resp = self._call(prompt, max_turns=3)
-            self.total_cost += resp.cost_usd
+            judge_backend = self.strategy.get_judge_backend()
+            resp = self._call_with(judge_backend, prompt, max_turns=3)
+            self._track_cost(resp.cost_usd, judge_backend.name)
 
             if not resp.is_error and resp.text:
                 judge_raw = parse_judge_response(resp.text)
@@ -502,8 +596,9 @@ class AutoResearcher:
             f"{self.knowledge_base}"
         )
 
-        resp = self._call(prompt, max_turns=3, timeout=120)
-        self.total_cost += resp.cost_usd
+        compress_backend = self.strategy.get_compress_backend()
+        resp = self._call_with(compress_backend, prompt, max_turns=3, timeout=120)
+        self._track_cost(resp.cost_usd, compress_backend.name)
 
         if not resp.is_error and resp.text and len(resp.text) > 200:
             self.knowledge_base = resp.text
@@ -528,8 +623,9 @@ class AutoResearcher:
         )
 
         log.info("Generating final synthesis report...")
-        resp = self._call(prompt, max_turns=5)
-        self.total_cost += resp.cost_usd
+        synth_backend = self.strategy.get_synthesize_backend()
+        resp = self._call_with(synth_backend, prompt, max_turns=5)
+        self._track_cost(resp.cost_usd, synth_backend.name)
 
         if not resp.is_error and resp.text:
             self.synthesis_path.write_text(resp.text, encoding="utf-8")
@@ -571,11 +667,14 @@ class AutoResearcher:
         print("\n" + "=" * 60)
         print("  AUTORESEARCH SESSION COMPLETE")
         print("=" * 60)
-        print(f"  Backend:     {self.backend.name}")
+        print(f"  Strategy:    {self.strategy.describe()}")
         print(f"  Topic:       {self.config.topic}")
         print(f"  Iterations:  {self.iteration}")
         print(f"  Best score:  {self.best_score:.1f}")
         print(f"  Total cost:  ${self.total_cost:.3f}")
+        if self.per_backend_costs:
+            for name, cost in sorted(self.per_backend_costs.items()):
+                print(f"    {name}: ${cost:.3f}")
         print(f"  Dimensions:  {len(self.explored_dimensions)} explored")
         print(f"  Results:     {self.results_path}")
         if self.synthesis_path.exists():

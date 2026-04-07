@@ -11,9 +11,10 @@ import logging
 import sys
 from pathlib import Path
 
-from .backend import VALID_BACKENDS, get_backend
-from .config import ResearchConfig
+from .backend import VALID_BACKENDS, get_backend, get_backends
+from .config import VALID_STRATEGIES, ResearchConfig
 from .orchestrator import AutoResearcher
+from .strategy import get_strategy
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -73,6 +74,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Generate a synthesis report from existing data and exit.",
     )
     parser.add_argument(
+        "--strategy",
+        choices=VALID_STRATEGIES,
+        default=None,
+        help="Multi-backend strategy. Overrides the config file.",
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable debug logging.",
@@ -98,6 +105,9 @@ def main(argv: list[str] | None = None) -> int:
     backend_name = args.backend or config.execution.backend
     backend = get_backend(backend_name)
 
+    # Resolve strategy (CLI flag overrides config file)
+    strategy_name = args.strategy or config.execution.strategy
+
     # Resolve output directory
     output_dir: Path = args.output or Path("output") / config_path.stem
     output_dir = output_dir.resolve()
@@ -115,19 +125,36 @@ def main(argv: list[str] | None = None) -> int:
                     output_dir,
                 )
 
-    # Check backend CLI is available
-    if not backend.check_available():
-        log.error(
-            "%s CLI not found or not responding. "
-            "Ensure '%s --version' works from the terminal.",
-            backend.name,
-            backend.cli_executable(),
-        )
-        return 1
+    # Build multi-backend set and check availability
+    all_names = config.execution.backends.all_backend_names()
+    if strategy_name == "single":
+        all_names = {backend_name}
+    backends = get_backends(all_names)
+
+    for name, be in backends.items():
+        if not be.check_available():
+            log.error(
+                "%s CLI not found or not responding. "
+                "Ensure '%s --version' works from the terminal.",
+                name, be.cli_executable(),
+            )
+            return 1
+
+    # Build strategy
+    strategy = get_strategy(
+        strategy_name,
+        config.execution.backends,
+        config.execution.strategy_config,
+        backends,
+    )
 
     # Run
     researcher = AutoResearcher(
-        config=config, backend=backend, output_dir=output_dir
+        config=config,
+        backend=backend,
+        output_dir=output_dir,
+        backends=backends,
+        strategy=strategy,
     )
 
     try:

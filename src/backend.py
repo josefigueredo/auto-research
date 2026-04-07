@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
 import time
 from abc import ABC, abstractmethod
@@ -114,6 +117,22 @@ def get_backend(name: str) -> Backend:
     return cls()
 
 
+def get_backends(backend_names: set[str]) -> dict[str, Backend]:
+    """Instantiate a set of backends by name, deduplicating instances.
+
+    Args:
+        backend_names: Set of backend names to instantiate.
+
+    Returns:
+        Mapping of backend name to ``Backend`` instance.  Each name is
+        instantiated exactly once.
+
+    Raises:
+        ValueError: If any name is not recognised.
+    """
+    return {name: get_backend(name) for name in backend_names}
+
+
 # ---------------------------------------------------------------------------
 # Abstract base
 # ---------------------------------------------------------------------------
@@ -176,6 +195,55 @@ class Backend(ABC):
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return False
 
+    @staticmethod
+    def _run_process(
+        cmd: list[str],
+        *,
+        input: str | None = None,
+        timeout: int = 300,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run a subprocess with reliable timeout on Windows.
+
+        On Windows, ``subprocess.run(timeout=...)`` kills the top-level
+        shell shim but leaves child ``node`` processes alive.  This helper
+        uses ``CREATE_NEW_PROCESS_GROUP`` + ``taskkill /T`` to ensure the
+        entire process tree is terminated on timeout.
+        """
+        kwargs: dict[str, Any] = dict(
+            stdin=subprocess.PIPE if input is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+        )
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+
+        proc = subprocess.Popen(cmd, **kwargs)
+        try:
+            stdout, stderr = proc.communicate(input=input, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # Kill the entire process tree
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True,
+                )
+            else:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    proc.kill()
+            proc.wait()
+            raise subprocess.TimeoutExpired(cmd, timeout)
+
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=proc.returncode,
+            stdout=stdout or "",
+            stderr=stderr or "",
+        )
+
     def invoke(self, prompt: str, opts: CallOptions, timeout: int = 300) -> AgentResponse:
         """Run the CLI with *prompt* and return a parsed response.
 
@@ -205,14 +273,7 @@ class Backend(ABC):
         )
 
         try:
-            result = subprocess.run(
-                cmd,
-                input=stdin_input,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                encoding="utf-8",
-            )
+            result = self._run_process(cmd, input=stdin_input, timeout=timeout)
         except subprocess.TimeoutExpired:
             log.warning("%s CLI timed out after %ds.", self.name, timeout)
             return AgentResponse(text="", cost_usd=0.0, is_error=True)
@@ -247,13 +308,7 @@ class Backend(ABC):
                 tmp_path,
             )
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                encoding="utf-8",
-            )
+            result = self._run_process(cmd, timeout=timeout)
 
             if result.returncode != 0:
                 self._handle_error(result)
@@ -396,14 +451,7 @@ class ClaudeBackend(Backend):
         )
 
         try:
-            result = subprocess.run(
-                cmd,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                encoding="utf-8",
-            )
+            result = self._run_process(cmd, input=prompt, timeout=timeout)
         except subprocess.TimeoutExpired:
             log.warning("%s CLI timed out after %ds.", self.name, timeout)
             return AgentResponse(text="", cost_usd=0.0, is_error=True)
