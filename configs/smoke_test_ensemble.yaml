@@ -1,5 +1,5 @@
-# Smoke test for ensemble strategy (claude + codex).
-# Two backends research independently, claude judges blindly.
+# Smoke test for ensemble strategy (3 backends).
+# Codex + gemini research independently, claude judges blindly.
 
 research:
   topic: "What are three pros and cons of Python?"
@@ -28,10 +28,10 @@ research:
     backends:
       primary: claude
       research:
-        - claude
         - codex
+        - gemini
       judge: claude
-      utility: claude
+      utility: gemini
     strategy_config:
       merge_mode: best
       stagger_seconds: 5

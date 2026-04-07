@@ -37,10 +37,10 @@ research:
     # strategy: ensemble     # single | ensemble | adversarial | parallel | serial | specialist
     # backends:
     #   primary: claude      # hypothesis + synthesis (best reasoner)
-    #   research:            # execution phase backends
-    #     - claude
+    #   research:            # execution phase backends (independent replication)
     #     - codex
-    #   judge: claude        # scoring (should differ from research for blind review)
+    #     - gemini
+    #   judge: claude        # scoring (must differ from research — blind review)
     #   utility: gemini      # compression (cheapest available)
     # strategy_config:
     #   merge_mode: best     # best (pick highest score) | union (merge all passing)

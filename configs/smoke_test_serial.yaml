@@ -1,5 +1,5 @@
-# Smoke test for serial strategy (codex drafts, claude refines).
-# Codex does a broad first pass, claude deepens and corrects.
+# Smoke test for serial strategy (3 backends).
+# Gemini drafts (cheap/fast), codex refines, claude judges.
 
 research:
   topic: "What are three pros and cons of Python?"
@@ -28,9 +28,9 @@ research:
     backends:
       primary: claude
       research:
+        - gemini
         - codex
-        - claude
       judge: claude
-      utility: claude
+      utility: gemini
     strategy_config:
       refiner_sees_draft: true

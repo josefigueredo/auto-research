@@ -438,6 +438,18 @@ flowchart TD
 Routes each dimension to the backend best suited for it based on keyword
 matching. No duplication — just smarter routing.
 
+### Backend Role Assignment
+
+The key principle: **the judge must be a different provider than the
+researchers** to avoid self-confirmation bias.
+
+| Role | Ideal Backend | Why |
+|------|---------------|-----|
+| **primary** (hypothesis, synthesis) | claude | Best strategic reasoning |
+| **research** | codex + gemini | Independent replication across providers |
+| **judge** | claude | Blind review — never touched the research |
+| **utility** (compress) | gemini | Cheapest, mechanical task |
+
 ### Multi-Backend Config Example
 
 ```yaml
@@ -447,12 +459,12 @@ research:
     backend: claude
     strategy: ensemble
     backends:
-      primary: claude           # hypothesis + synthesis
-      research:
-        - claude
+      primary: claude           # hypothesis + synthesis (best reasoner)
+      research:                 # independent replication
         - codex
-      judge: claude             # blind review (differs from researchers)
-      utility: claude           # compression
+        - gemini
+      judge: claude             # blind review (different provider than researchers)
+      utility: gemini           # compression (cheapest)
     strategy_config:
       merge_mode: best          # best | union
       stagger_seconds: 5        # delay between parallel launches

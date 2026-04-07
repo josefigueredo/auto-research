@@ -1,5 +1,5 @@
-# Smoke test for adversarial strategy (codex researches, claude critiques).
-# Codex does the research, claude writes a critique, claude judges.
+# Smoke test for adversarial strategy (3 backends).
+# Codex researches, gemini critiques, claude adjudicates.
 
 research:
   topic: "What are three pros and cons of Python?"
@@ -29,8 +29,8 @@ research:
       primary: claude
       research:
         - codex
-        - claude
+        - gemini
       judge: claude
-      utility: claude
+      utility: gemini
     strategy_config:
       critique_depth: standard
