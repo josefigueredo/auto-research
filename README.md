@@ -3,7 +3,9 @@
 Autonomous research framework powered by AI coding agent CLIs.
 Adapts [Karpathy's autoresearch pattern](https://github.com/karpathy/autoresearch)
 — replacing GPU training runs with LLM agent calls for deep, iterative research
-on any topic. Supports **Claude**, **Codex**, **Gemini**, and **Copilot** backends.
+on any topic. Supports **Claude**, **Codex**, **Gemini**, and **Copilot** backends
+with **multi-backend strategies** for scientific validation: ensemble research,
+adversarial review, serial refinement, and specialist routing.
 
 ## The Pattern
 
@@ -31,8 +33,9 @@ beat the current best are merged into a growing knowledge base. On exit
 
 ```mermaid
 flowchart TD
-    START([cli.py --config topic.yaml]) --> INIT[Load config + check backend CLI]
-    INIT --> CHECK{--resume flag?}
+    START([cli.py --config topic.yaml]) --> INIT[Load config + check backends]
+    INIT --> STRAT[Build strategy<br>single / ensemble / adversarial /<br>parallel / serial / specialist]
+    STRAT --> CHECK{--resume flag?}
     CHECK -->|Yes| RESUME[Rebuild state from<br>iterations/ + results.tsv]
     CHECK -->|No| FRESH[Initialize empty<br>knowledge base]
     RESUME --> LOOP
@@ -40,18 +43,22 @@ flowchart TD
 
     LOOP[[INFINITE LOOP]] --> HYPO
 
-    subgraph ITERATION ["Each Iteration (~3 agent calls)"]
-        HYPO[1. HYPOTHESIS<br>backend.invoke&#40;prompt&#41;<br>Pick next dimension]
+    subgraph ITERATION ["Each Iteration"]
+        HYPO[1. HYPOTHESIS<br>primary backend<br>Pick next dimension]
         HYPO --> EXHAUST{Dimension<br>exhausted?}
         EXHAUST -->|Yes, 3+ attempts| SKIP_DIM[Skip, mark explored]
         EXHAUST -->|No| EXEC
         SKIP_DIM --> HYPO
-        EXEC[2. EXECUTE<br>backend.invoke&#40;prompt + tools&#41;<br>WebSearch + WebFetch]
-        EXEC --> CRASH{Crash?}
+        EXEC[2. EXECUTE<br>strategy.execute_research&#40;&#41;<br>single / parallel / serial]
+        EXEC --> CRIT{Post-research?}
+        CRIT -->|Adversarial| CRITIQUE[Critique by<br>adversary backend]
+        CRIT -->|No| CRASH
+        CRITIQUE --> CRASH
+        CRASH{Crash?}
         CRASH -->|Yes| LOG_CRASH[Log crash<br>Track attempt count]
         CRASH -->|No| SCORE
         LOG_CRASH --> LOOP
-        SCORE[3. SCORE<br>Heuristic 40% + Judge 60%]
+        SCORE[3. SCORE<br>judge backend<br>Heuristic 40% + Judge 60%]
         SCORE --> DECIDE{total > best?}
         DECIDE -->|KEEP| MERGE[Merge findings<br>into knowledge_base.md]
         DECIDE -->|DISCARD| SAVE[Save iteration file<br>but don't merge]
@@ -67,11 +74,11 @@ flowchart TD
     WAIT_LONG --> COMPRESS
     WAIT_SHORT --> COMPRESS
     COMPRESS{Every N iters?}
-    COMPRESS -->|Yes| SHRINK[Compress knowledge base]
+    COMPRESS -->|Yes| SHRINK[Compress knowledge base<br>utility backend]
     COMPRESS -->|No| LOOP
     SHRINK --> LOOP
 
-    LOOP -.->|Ctrl+C or max_iterations| SYNTH[Generate synthesis.md]
+    LOOP -.->|Ctrl+C or max_iterations| SYNTH[Generate synthesis.md<br>primary backend]
     SYNTH --> DONE([Print summary + exit])
 
     style LOOP fill:#f59e0b,color:#000
@@ -80,6 +87,8 @@ flowchart TD
     style LOG_CRASH fill:#ef4444,color:#fff
     style SYNTH fill:#3b82f6,color:#fff
     style WAIT_LONG fill:#f97316,color:#000
+    style STRAT fill:#8b5cf6,color:#fff
+    style CRITIQUE fill:#f59e0b,color:#000
 ```
 
 ### Single Iteration
@@ -87,7 +96,10 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     participant O as orchestrator.py
-    participant C as AI CLI Backend<br>(stdin or argument)
+    participant S as Strategy
+    participant P as Primary Backend
+    participant R as Research Backend(s)
+    participant J as Judge Backend
     participant FS as File System
 
     O->>FS: Read knowledge_base.md
@@ -95,21 +107,40 @@ sequenceDiagram
 
     Note over O: Render prompt template<br>with knowledge summary
 
-    O->>C: backend.invoke(prompt, opts)
-    C-->>O: JSON: {dimension, questions, approach}
+    O->>P: hypothesis (prompt, max_turns=3)
+    P-->>O: JSON: {dimension, questions, approach}
 
     O->>O: Check dimension attempt count
 
     O->>FS: Read prompts/research.md
-    O->>C: backend.invoke(prompt, opts + tools)
-    Note over C: Agent searches web,<br>fetches docs, cross-references
-    C-->>O: Markdown findings
+    O->>S: strategy.execute_research(prompt)
+
+    alt Single / Specialist
+        S->>R: one backend researches
+        R-->>S: Markdown findings
+    else Ensemble / Parallel
+        S->>R: backends research in parallel
+        R-->>S: multiple findings (pick best or merge)
+    else Serial
+        S->>R: drafter backend researches
+        R-->>S: draft findings
+        S->>R: refiner backend deepens draft
+        R-->>S: refined findings
+    end
+    S-->>O: ResearchResult
+
+    opt Adversarial strategy
+        O->>S: strategy.post_research(findings)
+        S->>R: adversary critiques findings
+        R-->>S: critique text
+        S-->>O: CritiqueResult (appended to findings)
+    end
 
     O->>O: Heuristic score (regex patterns, counting)
 
     O->>FS: Read prompts/evaluate.md
-    O->>C: backend.invoke(prompt, opts)
-    C-->>O: JSON: {depth, accuracy, novelty, actionability}
+    O->>J: judge backend scores findings
+    J-->>O: JSON: {depth, accuracy, novelty, actionability}
 
     O->>O: Combine: 0.4 * heuristic + 0.6 * judge
 
@@ -121,7 +152,6 @@ sequenceDiagram
     end
 
     O->>FS: Append row to results.tsv
-    O->>O: Check rate limit utilization
 ```
 
 ## Quick Start
@@ -129,11 +159,20 @@ sequenceDiagram
 ```bash
 uv sync
 
-# Run with Claude (default backend)
+# Run with Claude (default backend, single strategy)
 uv run python -m src.cli --config configs/aws_api_gateway.yaml
 
 # Run with a different backend
 uv run python -m src.cli --config configs/aws_api_gateway.yaml --backend codex
+
+# Multi-backend: ensemble (parallel research + blind review)
+uv run python -m src.cli --config configs/smoke_test_ensemble.yaml
+
+# Multi-backend: adversarial (research + critique + adjudication)
+uv run python -m src.cli --config configs/smoke_test_adversarial.yaml
+
+# Override strategy from CLI
+uv run python -m src.cli --config configs/aws_api_gateway.yaml --strategy ensemble
 
 # Resume a previous session
 uv run python -m src.cli --config configs/aws_api_gateway.yaml --resume
@@ -156,20 +195,29 @@ uv run python -m src.cli --config configs/aws_api_gateway.yaml --synthesize
 ```plaintext
 autoresearch/
     src/
-        cli.py              Entry point (--config, --backend, --resume, --synthesize)
+        cli.py              Entry point (--config, --backend, --strategy, --resume, --synthesize)
         config.py           YAML config loader with frozen dataclasses
         backend.py          Backend ABC + Claude, Codex, Gemini, Copilot implementations
         orchestrator.py     AutoResearcher class — the infinite loop
         scorer.py           Heuristic scoring + LLM-as-judge
+        strategy.py         Multi-backend strategies (ensemble, adversarial, serial, etc.)
     configs/
-        aws_api_gateway.yaml   Demo: AWS API Gateway comparison
-        _template.yaml         Copy this for new research topics
+        aws_api_gateway.yaml        Demo: AWS API Gateway comparison
+        _template.yaml              Copy this for new research topics
+        smoke_test_claude.yaml      Single-backend smoke tests
+        smoke_test_ensemble.yaml    Multi-backend smoke tests
+        smoke_test_adversarial.yaml
+        smoke_test_serial.yaml
+        smoke_test_specialist.yaml
     prompts/
         hypothesis.md       Picks next dimension to explore (returns JSON)
         research.md         Deep research with web search tools
         evaluate.md         LLM judge: depth, accuracy, novelty, actionability
         synthesize.md       Final report generation
-    tests/                  Test suite (pytest, 119 tests)
+        critique.md         Adversarial critique of findings
+        refine.md           Serial refinement of draft findings
+        merge.md            Merge parallel research outputs
+    tests/                  Test suite (pytest, 160 tests)
     output/                 Runtime artifacts (gitignored)
         <config-name>/
             results.tsv         Experiment log (TSV)
@@ -217,6 +265,11 @@ autoresearch/
 | `timeout_seconds` | `600` | Timeout per invocation in seconds |
 | `compress_every` | `5` | Compress knowledge base every N iterations |
 | `allowed_tools` | `WebSearch,...` | Tools available to the research agent |
+| `strategy` | `single` | Multi-backend strategy (see below) |
+| `backends.primary` | same as `backend` | Backend for hypothesis + synthesis |
+| `backends.research` | same as `backend` | Backend(s) for research execution |
+| `backends.judge` | same as primary | Backend for scoring (blind review) |
+| `backends.utility` | same as primary | Backend for compression (cheapest) |
 | `min_dimensions_per_iteration` | `1` | Min dimensions expected per iteration |
 | `target_dimensions_total` | `10` | Target total dimensions to cover |
 | `evidence_types` | see template | Evidence types for heuristic scoring |
@@ -275,6 +328,135 @@ flowchart LR
 Combined: `total = 0.4 * heuristic + 0.6 * judge`. If `total > best_score`,
 findings are merged into the knowledge base (**KEEP**). Otherwise, the iteration
 file is saved but findings are not merged (**DISCARD**).
+
+## Multi-Backend Strategies
+
+By default, one backend handles every phase. Multi-backend strategies assign
+different backends to different roles, applying scientific validation
+principles: independent replication and blind peer review.
+
+### Strategy Overview
+
+| Strategy | Execution | Cost | Best For |
+|----------|-----------|------|----------|
+| **single** | One backend for everything | 1x | Simple runs, single provider |
+| **ensemble** | 2 backends research in parallel | ~1.5x | Default for quality — replication + blind review |
+| **adversarial** | Research + critique + adjudication | ~1.3x | Accuracy on hallucination-prone topics |
+| **parallel** | All backends independently | Nx | High-stakes completeness |
+| **serial** | Draft by cheap backend, refined by precise one | ~1.5x | Depth over breadth |
+| **specialist** | Route dimensions by keyword match | 1x | Heterogeneous dimensions |
+
+### Ensemble Strategy
+
+```mermaid
+flowchart LR
+    PROMPT[Research Prompt] --> PAR
+
+    subgraph PAR ["Parallel Execution"]
+        A[Backend A<br>e.g. Claude]
+        B[Backend B<br>e.g. Codex]
+    end
+
+    A --> RA[Findings A]
+    B --> RB[Findings B]
+
+    RA --> SEL{Pick best<br>or merge}
+    RB --> SEL
+
+    SEL --> FINDINGS[Best Findings]
+    FINDINGS --> JUDGE[Judge Backend<br>different from A and B<br>blind review]
+    JUDGE --> SCORE[Score]
+
+    style PAR fill:#dbeafe,color:#000
+    style JUDGE fill:#fef3c7,color:#000
+    style SEL fill:#f59e0b,color:#000
+```
+
+Two backends research the same dimension independently.  A **different**
+backend scores the findings without knowing which backend produced them
+— blind peer review.  Eliminates self-confirmation bias.
+
+### Adversarial Strategy
+
+```mermaid
+flowchart LR
+    PROMPT[Research Prompt] --> RES[Researcher<br>e.g. Codex]
+    RES --> FINDINGS[Findings]
+    FINDINGS --> ADV[Adversary<br>e.g. Claude]
+    ADV --> CRITIQUE[Critique:<br>errors, gaps,<br>unsupported claims]
+    FINDINGS --> COMBINED[Findings +<br>Critique]
+    CRITIQUE --> COMBINED
+    COMBINED --> JUDGE[Judge Backend<br>sees both]
+    JUDGE --> SCORE[Score]
+
+    style RES fill:#dbeafe,color:#000
+    style ADV fill:#fecaca,color:#000
+    style JUDGE fill:#fef3c7,color:#000
+```
+
+One backend researches. A second backend critiques the findings for
+factual errors and gaps. The judge sees both findings and critique.
+
+### Serial Strategy
+
+```mermaid
+flowchart LR
+    PROMPT[Research Prompt] --> DRAFT[Drafter<br>e.g. Codex<br>fast / cheap]
+    DRAFT --> D[Draft Findings]
+    D --> REFINE[Refiner<br>e.g. Claude<br>precise / deep]
+    PROMPT --> REFINE
+    REFINE --> FINAL[Refined Findings]
+    FINAL --> JUDGE[Judge Backend]
+    JUDGE --> SCORE[Score]
+
+    style DRAFT fill:#d1fae5,color:#000
+    style REFINE fill:#dbeafe,color:#000
+    style JUDGE fill:#fef3c7,color:#000
+```
+
+A fast/cheap backend does a broad sweep. A precise/expensive backend
+reads the draft and deepens, corrects, and adds nuance.
+
+### Specialist Strategy
+
+```mermaid
+flowchart TD
+    DIM[Dimension Name] --> ROUTE{Keyword<br>Match}
+    ROUTE -->|code, SDK, API| CODEX[Codex]
+    ROUTE -->|pricing, comparison| GEMINI[Gemini]
+    ROUTE -->|architecture, trade-off| CLAUDE[Claude]
+    ROUTE -->|no match| PRIMARY[Primary Backend]
+
+    CODEX --> RESEARCH[Research Findings]
+    GEMINI --> RESEARCH
+    CLAUDE --> RESEARCH
+    PRIMARY --> RESEARCH
+
+    style ROUTE fill:#f59e0b,color:#000
+```
+
+Routes each dimension to the backend best suited for it based on keyword
+matching. No duplication — just smarter routing.
+
+### Multi-Backend Config Example
+
+```yaml
+research:
+  topic: "Your research question"
+  execution:
+    backend: claude
+    strategy: ensemble
+    backends:
+      primary: claude           # hypothesis + synthesis
+      research:
+        - claude
+        - codex
+      judge: claude             # blind review (differs from researchers)
+      utility: claude           # compression
+    strategy_config:
+      merge_mode: best          # best | union
+      stagger_seconds: 5        # delay between parallel launches
+```
 
 ## Resilience
 
@@ -351,7 +533,7 @@ uv sync --group dev
 uv run pytest tests/ -v
 ```
 
-119 tests covering all modules (backend, config, scorer, orchestrator, cli).
+160 tests covering all modules (backend, config, scorer, orchestrator, cli, strategy).
 
 ## Related Projects
 
