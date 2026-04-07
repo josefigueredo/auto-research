@@ -11,7 +11,7 @@ import logging
 import sys
 from pathlib import Path
 
-from .backend import VALID_BACKENDS, get_backend, get_backends
+from .backends import VALID_BACKENDS, get_backend, get_backends
 from .config import VALID_STRATEGIES, ResearchConfig
 from .orchestrator import AutoResearcher
 from .strategy import get_strategy

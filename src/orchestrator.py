@@ -15,8 +15,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .backend import AgentResponse, Backend, CallOptions, get_backends
+from .backends import CLAUDE_SHORTNAMES, AgentResponse, Backend, CallOptions, get_backends
 from .config import ResearchConfig
+from .prompts import render as _render
 from .scorer import (
     IterationScore,
     _MAX_FINDINGS_CHARS,
@@ -29,42 +30,7 @@ from .strategy import Strategy, get_strategy
 
 log = logging.getLogger("autoresearch")
 
-PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 KB_MAX_WORDS = 4000
-
-
-# ---------------------------------------------------------------------------
-# Prompt rendering
-# ---------------------------------------------------------------------------
-
-def _load_template(name: str) -> str:
-    """Read a prompt template file from the prompts directory.
-
-    Raises:
-        FileNotFoundError: With a user-friendly message if the template
-            is missing.
-    """
-    path = PROMPTS_DIR / name
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Prompt template not found: {path}. "
-            f"Ensure the 'prompts/' directory contains '{name}'."
-        )
-    return path.read_text(encoding="utf-8")
-
-
-def _render(template_name: str, **kwargs: str) -> str:
-    """Load a prompt template and render it with the given variables.
-
-    Args:
-        template_name: Filename of the template in ``prompts/``.
-        **kwargs: Template variables to substitute.
-
-    Returns:
-        The rendered prompt string.
-    """
-    tmpl = _load_template(template_name)
-    return tmpl.format(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -143,13 +109,34 @@ class AutoResearcher:
         backend = kwargs.pop("_backend", self.backend)
         return self._call_with(backend, prompt, **kwargs)
 
+    @staticmethod
+    def _resolve_model(backend: Backend, config_model: str) -> str:
+        """Translate the config model name for a specific backend.
+
+        If the config uses a Claude shortname (``"sonnet"``, ``"opus"``,
+        ``"haiku"``) and the backend is not Claude, substitute that
+        backend's ``capabilities.default_model`` instead.
+        """
+        if config_model in CLAUDE_SHORTNAMES and backend.name != "claude":
+            resolved = backend.capabilities.default_model
+            if resolved:
+                log.debug(
+                    "Model '%s' not valid for %s, using '%s'.",
+                    config_model, backend.name, resolved,
+                )
+                return resolved
+        return config_model
+
     def _call_with(self, backend: Backend, prompt: str, **kwargs: Any) -> AgentResponse:
         """Invoke a specific backend with default options from config.
 
         Keyword arguments override the defaults from ``self.config.execution``.
+        Automatically translates Claude model shortnames for non-Claude backends.
         """
+        config_model = kwargs.pop("model", self.config.execution.model)
+        model = self._resolve_model(backend, config_model)
         opts = CallOptions(
-            model=kwargs.pop("model", self.config.execution.model),
+            model=model,
             allowed_tools=kwargs.pop("allowed_tools", ""),
             max_turns=kwargs.pop("max_turns", self.config.execution.max_turns),
             max_budget_usd=kwargs.pop("max_budget_usd", self.config.execution.max_budget_per_call),

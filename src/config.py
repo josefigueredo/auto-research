@@ -13,7 +13,7 @@ from typing import Any
 
 import yaml
 
-from .backend import VALID_BACKENDS
+from .backends import VALID_BACKENDS
 
 # Valid multi-backend strategy names.
 VALID_STRATEGIES = ("single", "ensemble", "adversarial", "parallel", "serial", "specialist")
@@ -255,6 +255,13 @@ class ResearchConfig:
                 judge=judge,
                 utility=utility,
             )
+            # Warn if judge is also a researcher (defeats blind review)
+            if strategy != "single" and judge and judge in research_val:
+                import logging
+                logging.getLogger("autoresearch").warning(
+                    "Judge backend '%s' is also a research backend — blind review is compromised.",
+                    judge,
+                )
         else:
             # Backward compat: single backend → populate roles from it
             backends_config = BackendsConfig(

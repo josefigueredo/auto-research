@@ -21,8 +21,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any
 
-from .backend import AgentResponse, Backend, CallOptions
+from .backends import AgentResponse, Backend, CallOptions
 from .config import BackendsConfig, StrategyConfig
+from .prompts import render as _render
 
 log = logging.getLogger("autoresearch")
 
@@ -107,6 +108,19 @@ class Strategy(ABC):
         self.backends_config = backends_config
         self.strategy_config = strategy_config
         self.backends = backends
+
+        # Validate all referenced backend names exist in the instantiated set.
+        for role_name in [
+            backends_config.primary,
+            *backends_config.research,
+            backends_config.judge,
+            backends_config.utility,
+        ]:
+            if role_name and role_name not in backends:
+                raise ValueError(
+                    f"Backend '{role_name}' referenced in config but not instantiated. "
+                    f"Available: {', '.join(backends)}"
+                )
 
     @property
     def primary(self) -> Backend:
@@ -340,9 +354,7 @@ class AdversarialStrategy(Strategy):
             "thorough": "Perform a line-by-line review for accuracy, completeness, and nuance.",
         }.get(depth, "Identify factual errors, unsupported claims, and important gaps.")
 
-        # Build critique prompt inline (critique.md template used if available)
         try:
-            from .orchestrator import _render
             critique_prompt = _render(
                 "critique.md",
                 findings=findings,
@@ -495,7 +507,6 @@ class SerialStrategy(Strategy):
         # Phase 2: Refine
         if self.strategy_config.refiner_sees_draft:
             try:
-                from .orchestrator import _render
                 refine_prompt = _render(
                     "refine.md",
                     draft=draft_resp.text,

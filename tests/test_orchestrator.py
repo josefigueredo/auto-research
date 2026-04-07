@@ -9,7 +9,8 @@ import pytest
 
 from src.backend import AgentResponse, Backend, CallOptions
 from src.config import ExecutionConfig, ResearchConfig, ScoringConfig
-from src.orchestrator import AutoResearcher, _render
+from src.orchestrator import AutoResearcher
+from src.prompts import render as _render
 
 
 # ---------------------------------------------------------------------------
@@ -83,15 +84,15 @@ def researcher(research_config, fake_backend, tmp_path) -> AutoResearcher:
 
 class TestRender:
     def test_renders_template(self, tmp_path, monkeypatch):
-        import src.orchestrator as orch
-        monkeypatch.setattr(orch, "PROMPTS_DIR", tmp_path)
+        import src.prompts as prompts_mod
+        monkeypatch.setattr(prompts_mod, "PROMPTS_DIR", tmp_path)
         (tmp_path / "test.md").write_text("Hello {name}, topic: {topic}", encoding="utf-8")
         result = _render("test.md", name="Alice", topic="APIs")
         assert result == "Hello Alice, topic: APIs"
 
     def test_missing_template_raises(self, tmp_path, monkeypatch):
-        import src.orchestrator as orch
-        monkeypatch.setattr(orch, "PROMPTS_DIR", tmp_path)
+        import src.prompts as prompts_mod
+        monkeypatch.setattr(prompts_mod, "PROMPTS_DIR", tmp_path)
         with pytest.raises(FileNotFoundError, match="Prompt template not found"):
             _render("nonexistent.md")
 
@@ -255,18 +256,22 @@ class TestAutoResearcherCall:
         assert resp.text == "ok"
 
     def test_call_passes_config_defaults(self, researcher):
-        researcher.backend = MagicMock()
-        researcher.backend.invoke.return_value = AgentResponse(text="ok", cost_usd=0.01, is_error=False)
+        mock_backend = MagicMock()
+        mock_backend.name = "claude"
+        mock_backend.invoke.return_value = AgentResponse(text="ok", cost_usd=0.01, is_error=False)
+        researcher.backend = mock_backend
         researcher._call("prompt")
-        opts = researcher.backend.invoke.call_args[0][1]
+        opts = mock_backend.invoke.call_args[0][1]
         assert isinstance(opts, CallOptions)
         assert opts.model == "sonnet"
         assert opts.max_budget_usd == 0.10
 
     def test_call_allows_overrides(self, researcher):
-        researcher.backend = MagicMock()
-        researcher.backend.invoke.return_value = AgentResponse(text="ok", cost_usd=0.01, is_error=False)
+        mock_backend = MagicMock()
+        mock_backend.name = "claude"
+        mock_backend.invoke.return_value = AgentResponse(text="ok", cost_usd=0.01, is_error=False)
+        researcher.backend = mock_backend
         researcher._call("prompt", model="opus", max_turns=3)
-        opts = researcher.backend.invoke.call_args[0][1]
+        opts = mock_backend.invoke.call_args[0][1]
         assert opts.model == "opus"
         assert opts.max_turns == 3
