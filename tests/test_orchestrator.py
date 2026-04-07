@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.backend import AgentResponse, Backend, CallOptions
+from src.backends import AgentResponse, Backend, CallOptions
 from src.config import ExecutionConfig, ResearchConfig, ScoringConfig
 from src.orchestrator import AutoResearcher
 from src.prompts import render as _render
@@ -26,7 +26,7 @@ class FakeBackend(Backend):
         return "fake-cli"
 
     def prompt_mode(self):
-        from src.backend import PromptMode
+        from src.backends import PromptMode
         return PromptMode.STDIN
 
     def build_command(self, opts):

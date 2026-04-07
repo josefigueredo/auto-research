@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.backend import AgentResponse
+from src.backends import AgentResponse
 from src.config import BackendsConfig, StrategyConfig
 from src.strategy import (
     AdversarialStrategy,
