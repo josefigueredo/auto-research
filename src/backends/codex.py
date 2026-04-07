@@ -15,7 +15,7 @@ class CodexBackend(Backend):
 
     name = "codex"
     capabilities = BackendCapabilities(
-        default_model="o4-mini",
+        default_model="gpt-5.4",
     )
 
     def cli_executable(self) -> str:

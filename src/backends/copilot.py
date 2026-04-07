@@ -1,7 +1,7 @@
 """GitHub Copilot CLI backend.
 
-Supports stdin prompt delivery (``-p -``), JSONL output, and autopilot
-mode with configurable turn limits.  Budget caps are not available.
+Prompts are passed as the ``-p`` argument value. For long prompts,
+a tempfile fallback is used.  Budget caps are not available.
 """
 
 from __future__ import annotations
@@ -27,18 +27,23 @@ class CopilotBackend(Backend):
         return "copilot"
 
     def prompt_mode(self) -> PromptMode:
-        return PromptMode.STDIN
+        return PromptMode.ARGUMENT
 
     def build_command(self, opts: CallOptions) -> list[str]:
-        cmd = ["copilot", "-p", "-"]
+        # NOTE: -p takes the prompt as its value.  The base class
+        # appends the prompt text as the LAST argument, so we must
+        # NOT put other flags between -p and the prompt.  We put -p
+        # last (before the prompt is appended by invoke()).
+        cmd = ["copilot"]
         if opts.model:
             cmd.extend(["--model", opts.model])
-        cmd.extend(["--output-format", "json", "--silent"])
+        cmd.extend(["--output-format", "json", "--silent", "--no-ask-user"])
         if opts.allowed_tools:
             cmd.append("--allow-all")
         cmd.append("--autopilot")
         if opts.max_turns > 0:
             cmd.extend(["--max-autopilot-continues", str(opts.max_turns)])
+        cmd.append("-p")
         return cmd
 
     def parse_response(self, stdout: str) -> AgentResponse:

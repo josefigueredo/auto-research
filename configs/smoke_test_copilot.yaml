@@ -21,4 +21,4 @@ research:
     backend: copilot
     model: gpt-4.1
     max_budget_per_call: 1.00
-    timeout_seconds: 120
+    timeout_seconds: 180

@@ -21,7 +21,7 @@ class TestCodexBackend:
         assert self.backend.prompt_mode() == PromptMode.STDIN
 
     def test_capabilities(self):
-        assert self.backend.capabilities.default_model == "o4-mini"
+        assert self.backend.capabilities.default_model == "gpt-5.4"
         assert self.backend.capabilities.supports_json_schema is False
         assert self.backend.capabilities.supports_budget_cap is False
 
