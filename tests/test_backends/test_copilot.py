@@ -78,6 +78,15 @@ class TestCopilotBackend:
         resp = self.backend.parse_response("")
         assert resp.is_error is True
 
+    def test_parse_response_no_tokens(self):
+        """Copilot doesn't report per-token usage."""
+        lines = [
+            json.dumps({"type": "assistant.message", "data": {"content": "hello"}}),
+        ]
+        resp = self.backend.parse_response("\n".join(lines))
+        assert resp.input_tokens == 0
+        assert resp.output_tokens == 0
+
     def test_parse_response_skips_empty_content(self):
         """Copilot sometimes emits assistant.message with empty content (tool calls)."""
         lines = [

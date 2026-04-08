@@ -48,6 +48,22 @@ class TestGeminiBackend:
         assert resp.text == "gemini output"
         assert resp.is_error is False
 
+    def test_parse_dict_response_with_tokens(self):
+        stdout = json.dumps({
+            "response": "4",
+            "stats": {
+                "models": {
+                    "gemini-2.5-flash": {
+                        "tokens": {"input": 5500, "candidates": 1, "total": 5517, "cached": 0, "thoughts": 16}
+                    }
+                }
+            }
+        })
+        resp = self.backend.parse_response(stdout)
+        assert resp.text == "4"
+        assert resp.input_tokens == 5500
+        assert resp.output_tokens == 1
+
     def test_parse_dict_response_uses_result_key(self):
         stdout = json.dumps({"result": "via result key"})
         resp = self.backend.parse_response(stdout)

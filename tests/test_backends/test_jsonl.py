@@ -36,3 +36,13 @@ class TestParseJsonlLastResult:
         })
         resp = parse_jsonl_last_result(stdout)
         assert resp.text == "codex reply"
+
+    def test_codex_tokens_from_turn_completed(self):
+        lines = [
+            json.dumps({"type": "turn.completed", "usage": {"input_tokens": 1000, "cached_input_tokens": 500, "output_tokens": 200}}),
+            json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "answer"}}),
+        ]
+        resp = parse_jsonl_last_result("\n".join(lines))
+        assert resp.text == "answer"
+        assert resp.input_tokens == 1500  # 1000 + 500 cached
+        assert resp.output_tokens == 200

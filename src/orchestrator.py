@@ -97,7 +97,10 @@ class AutoResearcher:
         self.knowledge_base: str = ""
         self.explored_dimensions: list[str] = []
         self.total_cost: float = 0.0
+        self.total_input_tokens: int = 0
+        self.total_output_tokens: int = 0
         self.per_backend_costs: dict[str, float] = {}
+        self.per_backend_tokens: dict[str, dict[str, int]] = {}
         self.results: list[dict[str, str]] = []
         self._dimension_attempts: dict[str, int] = {}
 
@@ -166,12 +169,24 @@ class AutoResearcher:
         )
 
     def _track_cost(self, cost: float, backend_name: str = "") -> None:
-        """Add cost to total and per-backend tracking."""
+        """Add cost to totals (no token data available)."""
         self.total_cost += cost
         if backend_name:
             self.per_backend_costs[backend_name] = (
                 self.per_backend_costs.get(backend_name, 0.0) + cost
             )
+
+    def _track_usage(self, resp: AgentResponse, backend_name: str = "") -> None:
+        """Add cost and token counts to totals and per-backend tracking."""
+        self._track_cost(resp.cost_usd, backend_name)
+        self.total_input_tokens += resp.input_tokens
+        self.total_output_tokens += resp.output_tokens
+        if backend_name:
+            entry = self.per_backend_tokens.setdefault(
+                backend_name, {"input": 0, "output": 0}
+            )
+            entry["input"] += resp.input_tokens
+            entry["output"] += resp.output_tokens
 
     # -- Public API --------------------------------------------------------
 
@@ -350,7 +365,7 @@ class AutoResearcher:
         if resp.is_error or not resp.text:
             return None
 
-        self._track_cost(resp.cost_usd, hypo_backend.name)
+        self._track_usage(resp, hypo_backend.name)
 
         try:
             return json.loads(resp.text)
@@ -449,7 +464,7 @@ class AutoResearcher:
 
             judge_backend = self.strategy.get_judge_backend()
             resp = self._call_with(judge_backend, prompt, max_turns=3)
-            self._track_cost(resp.cost_usd, judge_backend.name)
+            self._track_usage(resp, judge_backend.name)
 
             if not resp.is_error and resp.text:
                 judge_raw = parse_judge_response(resp.text)
@@ -538,6 +553,8 @@ class AutoResearcher:
             "status": status,
             "hypothesis": hypothesis[:120],
             "cumulative_cost_usd": f"{self.total_cost:.3f}",
+            "cumulative_input_tokens": str(self.total_input_tokens),
+            "cumulative_output_tokens": str(self.total_output_tokens),
         }
         self.results.append(row)
 
@@ -557,6 +574,8 @@ class AutoResearcher:
             "status",
             "hypothesis",
             "cumulative_cost_usd",
+            "cumulative_input_tokens",
+            "cumulative_output_tokens",
         ]
         with open(self.results_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fields, delimiter="\t")
@@ -585,7 +604,7 @@ class AutoResearcher:
 
         compress_backend = self.strategy.get_compress_backend()
         resp = self._call_with(compress_backend, prompt, max_turns=3, timeout=120)
-        self._track_cost(resp.cost_usd, compress_backend.name)
+        self._track_usage(resp, compress_backend.name)
 
         if not resp.is_error and resp.text and len(resp.text) > 200:
             self.knowledge_base = resp.text
@@ -612,7 +631,7 @@ class AutoResearcher:
         log.info("Generating final synthesis report...")
         synth_backend = self.strategy.get_synthesize_backend()
         resp = self._call_with(synth_backend, prompt, max_turns=5)
-        self._track_cost(resp.cost_usd, synth_backend.name)
+        self._track_usage(resp, synth_backend.name)
 
         if not resp.is_error and resp.text:
             self.synthesis_path.write_text(resp.text, encoding="utf-8")
@@ -659,9 +678,13 @@ class AutoResearcher:
         print(f"  Iterations:  {self.iteration}")
         print(f"  Best score:  {self.best_score:.1f}")
         print(f"  Total cost:  ${self.total_cost:.3f}")
-        if self.per_backend_costs:
-            for name, cost in sorted(self.per_backend_costs.items()):
-                print(f"    {name}: ${cost:.3f}")
+        print(f"  Tokens:      {self.total_input_tokens:,} in / {self.total_output_tokens:,} out")
+        if self.per_backend_costs or self.per_backend_tokens:
+            all_names = sorted(set(self.per_backend_costs) | set(self.per_backend_tokens))
+            for name in all_names:
+                cost = self.per_backend_costs.get(name, 0.0)
+                tok = self.per_backend_tokens.get(name, {"input": 0, "output": 0})
+                print(f"    {name}: {tok['input']:,} in / {tok['output']:,} out (${cost:.3f})")
         print(f"  Dimensions:  {len(self.explored_dimensions)} explored")
         print(f"  Results:     {self.results_path}")
         if self.synthesis_path.exists():

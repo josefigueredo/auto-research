@@ -42,10 +42,26 @@ class GeminiBackend(Backend):
             return AgentResponse(text=stdout, cost_usd=0.0, is_error=False)
 
         if isinstance(payload, dict):
+            in_tok, out_tok = self._extract_tokens(payload)
             return AgentResponse(
                 text=payload.get("response", payload.get("result", "")),
                 cost_usd=0.0,
                 is_error=payload.get("error") is not None,
+                input_tokens=in_tok,
+                output_tokens=out_tok,
             )
 
         return parse_jsonl_last_result(stdout, cost_key="cost_usd")
+
+    @staticmethod
+    def _extract_tokens(payload: dict) -> tuple[int, int]:
+        """Extract token counts from Gemini's stats object."""
+        stats = payload.get("stats", {})
+        models = stats.get("models", {})
+        in_tok = 0
+        out_tok = 0
+        for model_stats in models.values():
+            tokens = model_stats.get("tokens", {})
+            in_tok += tokens.get("input", 0)
+            out_tok += tokens.get("candidates", 0)
+        return in_tok, out_tok

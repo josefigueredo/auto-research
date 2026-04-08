@@ -36,6 +36,8 @@ class AgentResponse:
     text: str
     cost_usd: float
     is_error: bool
+    input_tokens: int = 0
+    output_tokens: int = 0
     raw: dict[str, Any] = field(default_factory=dict)
 
 

@@ -14,6 +14,8 @@ class TestAgentResponse:
     def test_defaults(self):
         r = AgentResponse(text="", cost_usd=0.0, is_error=False)
         assert r.raw == {}
+        assert r.input_tokens == 0
+        assert r.output_tokens == 0
 
 
 class TestCallOptions:

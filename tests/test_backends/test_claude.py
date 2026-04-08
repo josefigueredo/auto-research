@@ -53,12 +53,16 @@ class TestClaudeBackend:
     def test_parse_response_array(self):
         stdout = json.dumps([
             {"type": "system"},
-            {"type": "result", "result": "findings", "total_cost_usd": 0.12},
+            {"type": "result", "result": "findings", "total_cost_usd": 0.12,
+             "usage": {"input_tokens": 100, "output_tokens": 50,
+                       "cache_read_input_tokens": 200, "cache_creation_input_tokens": 30}},
         ])
         resp = self.backend.parse_response(stdout)
         assert resp.text == "findings"
         assert resp.cost_usd == 0.12
         assert resp.is_error is False
+        assert resp.input_tokens == 330  # 100 + 200 + 30
+        assert resp.output_tokens == 50
 
     def test_parse_response_dict(self):
         stdout = json.dumps({"result": "dict result", "cost_usd": 0.05})
@@ -110,10 +114,13 @@ class TestClaudeBackend:
         mock_run.return_value = MagicMock(
             returncode=1,
             stdout=json.dumps([
-                {"type": "result", "result": "partial result", "total_cost_usd": 0.50},
+                {"type": "result", "result": "partial result", "total_cost_usd": 0.50,
+                 "usage": {"input_tokens": 500, "output_tokens": 200}},
             ]),
             stderr="budget exceeded",
         )
         resp = self.backend.invoke("prompt", CallOptions(), timeout=10)
         assert resp.text == "partial result"
         assert resp.is_error is False
+        assert resp.input_tokens == 500
+        assert resp.output_tokens == 200
