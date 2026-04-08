@@ -235,6 +235,15 @@ class EnsembleStrategy(Strategy):
 
     name = "ensemble"
 
+    def __init__(self, backends_config, strategy_config, backends):
+        super().__init__(backends_config, strategy_config, backends)
+        if len(backends_config.research) < 2:
+            log.warning(
+                "Ensemble strategy works best with 2+ research backends, got %d. "
+                "Consider adding another backend for independent replication.",
+                len(backends_config.research),
+            )
+
     def execute_research(
         self, prompt, invoke, *, allowed_tools="", max_turns=10, timeout=600
     ) -> ResearchResult:

@@ -6,3 +6,4 @@ output/
 dist/
 build/
 .claude/
+.pytest_cache/

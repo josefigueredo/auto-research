@@ -185,7 +185,10 @@ class TestAutoResearcherHelpers:
     def test_kb_summary_truncated(self, researcher):
         researcher.knowledge_base = "word " * 5000
         summary = researcher._kb_summary()
-        assert summary.endswith("[... truncated for brevity]")
+        # Sandwich pattern: keeps head + tail, truncates middle
+        assert "truncated" in summary
+        assert summary.startswith("word")
+        assert summary.rstrip().endswith("word")
         assert len(summary.split()) < 5000
 
     def test_format_dimension_list_empty(self, researcher):

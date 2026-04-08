@@ -7,11 +7,14 @@ configuration.  Configs are loaded from YAML files via
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+log = logging.getLogger("autoresearch")
 
 from .backends import VALID_BACKENDS
 
@@ -176,7 +179,10 @@ class ResearchConfig:
                 fields.
         """
         with open(path, encoding="utf-8") as f:
-            raw: Any = yaml.safe_load(f)
+            try:
+                raw: Any = yaml.safe_load(f)
+            except yaml.YAMLError as exc:
+                raise ValueError(f"Invalid YAML in {path}: {exc}") from exc
 
         if not isinstance(raw, dict):
             raise ValueError(f"Config file must contain a YAML mapping, got {type(raw).__name__}")
@@ -257,8 +263,7 @@ class ResearchConfig:
             )
             # Warn if judge is also a researcher (defeats blind review)
             if strategy != "single" and judge and judge in research_val:
-                import logging
-                logging.getLogger("autoresearch").warning(
+                log.warning(
                     "Judge backend '%s' is also a research backend — blind review is compromised.",
                     judge,
                 )

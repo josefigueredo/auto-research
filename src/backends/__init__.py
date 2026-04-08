@@ -14,7 +14,10 @@ from .gemini import GeminiBackend
 # Re-export public API.
 from .base import Backend
 from .jsonl import parse_jsonl_last_result
-from .registry import VALID_BACKENDS, get_backend, get_backends
+from .registry import get_backend, get_backends, valid_backends
+
+# Generated from registry after all backends are imported above.
+VALID_BACKENDS = valid_backends()
 from .types import (
     CLAUDE_SHORTNAMES,
     AgentResponse,

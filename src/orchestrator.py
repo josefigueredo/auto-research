@@ -559,7 +559,7 @@ class AutoResearcher:
         self.results.append(row)
 
         with open(self.results_path, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=list(row.keys()), delimiter="\t")
+            writer = csv.DictWriter(f, fieldnames=list(row.keys()), delimiter="\t", quoting=csv.QUOTE_MINIMAL)
             writer.writerow(row)
 
     def _write_tsv_header(self) -> None:
@@ -578,7 +578,7 @@ class AutoResearcher:
             "cumulative_output_tokens",
         ]
         with open(self.results_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fields, delimiter="\t")
+            writer = csv.DictWriter(f, fieldnames=fields, delimiter="\t", quoting=csv.QUOTE_MINIMAL)
             writer.writeheader()
 
     # -- Compression -------------------------------------------------------
@@ -640,13 +640,21 @@ class AutoResearcher:
     # -- Helpers -----------------------------------------------------------
 
     def _kb_summary(self) -> str:
-        """Return a bounded summary of the knowledge base for prompt context."""
+        """Return a bounded summary of the knowledge base for prompt context.
+
+        Uses a sandwich pattern: keeps early findings (context) plus
+        the most recent findings (freshest data), truncating the middle.
+        """
         if not self.knowledge_base:
             return "(No prior findings yet — this is the first iteration.)"
         words = self.knowledge_base.split()
         if len(words) <= KB_MAX_WORDS:
             return self.knowledge_base
-        return " ".join(words[:KB_MAX_WORDS]) + "\n\n[... truncated for brevity]"
+        head_size = KB_MAX_WORDS // 3
+        tail_size = KB_MAX_WORDS - head_size
+        head = " ".join(words[:head_size])
+        tail = " ".join(words[-tail_size:])
+        return f"{head}\n\n[... {len(words) - KB_MAX_WORDS} words truncated ...]\n\n{tail}"
 
     def _format_dimension_list(self, dims: list[str]) -> str:
         """Format a list of dimensions as a markdown bullet list."""

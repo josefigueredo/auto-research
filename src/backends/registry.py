@@ -7,14 +7,17 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .base import Backend
 
-VALID_BACKENDS = ("claude", "codex", "gemini", "copilot")
-
 _REGISTRY: dict[str, type[Backend]] = {}
 
 
 def _register(name: str, cls: type[Backend]) -> None:
     """Called by ``Backend.__init_subclass__`` to auto-register backends."""
     _REGISTRY[name] = cls
+
+
+def valid_backends() -> tuple[str, ...]:
+    """Return all registered backend names (derived from the registry)."""
+    return tuple(sorted(_REGISTRY))
 
 
 def get_backend(name: str) -> Backend:
@@ -26,7 +29,7 @@ def get_backend(name: str) -> Backend:
     cls = _REGISTRY.get(name)
     if cls is None:
         raise ValueError(
-            f"Unknown backend '{name}'. Must be one of: {', '.join(VALID_BACKENDS)}"
+            f"Unknown backend '{name}'. Must be one of: {', '.join(valid_backends())}"
         )
     return cls()
 
