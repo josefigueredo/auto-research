@@ -1,5 +1,5 @@
-# Smoke test for serial strategy (3 backends).
-# Gemini drafts (cheap/fast), codex refines, claude judges.
+# Smoke test for serial strategy.
+# Codex drafts (fast), claude refines (precise), codex judges.
 
 research:
   topic: "What are three pros and cons of Python?"
@@ -22,15 +22,15 @@ research:
     backend: claude
     model: sonnet
     max_budget_per_call: 1.00
-    timeout_seconds: 180
+    timeout_seconds: 300
 
     strategy: serial
     backends:
-      primary: claude
+      primary: claude         # hypothesis + synthesis
       research:
-        - gemini
-        - codex
-      judge: claude
-      utility: gemini
+        - codex              # drafter (fast)
+        - claude             # refiner (precise)
+      judge: codex           # judge (different from refiner)
+      utility: codex
     strategy_config:
       refiner_sees_draft: true

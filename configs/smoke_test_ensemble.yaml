@@ -1,5 +1,6 @@
-# Smoke test for ensemble strategy (3 backends).
-# Codex + gemini research independently, claude judges blindly.
+# Smoke test for ensemble strategy.
+# Claude + codex research independently, claude judges blindly.
+# Codex never touches hypothesis/judge — different provider for blind review.
 
 research:
   topic: "What are three pros and cons of Python?"
@@ -22,16 +23,16 @@ research:
     backend: claude
     model: sonnet
     max_budget_per_call: 1.00
-    timeout_seconds: 180
+    timeout_seconds: 300
 
     strategy: ensemble
     backends:
-      primary: claude
+      primary: claude         # hypothesis + synthesis
       research:
-        - codex
-        - gemini
-      judge: claude
-      utility: gemini
+        - codex              # researcher 1 (different provider)
+        - claude             # researcher 2
+      judge: codex           # blind review (didn't do hypothesis)
+      utility: codex
     strategy_config:
       merge_mode: best
       stagger_seconds: 5
