@@ -394,14 +394,44 @@ principles: independent replication and blind peer review.
 
 ### Strategy Overview
 
-| Strategy | Execution | Cost | Best For |
-|----------|-----------|------|----------|
-| **single** | One backend for everything | 1x | Simple runs, single provider |
-| **ensemble** | 2 backends research in parallel | ~1.5x | Default for quality — replication + blind review |
-| **adversarial** | Research + critique + adjudication | ~1.3x | Accuracy on hallucination-prone topics |
-| **parallel** | All backends independently | Nx | High-stakes completeness |
-| **serial** | Draft by cheap backend, refined by precise one | ~1.5x | Depth over breadth |
-| **specialist** | Route dimensions by keyword match | 1x | Heterogeneous dimensions |
+| Strategy | How It Works | Cost | Min Backends |
+|----------|-------------|------|-------------|
+| **single** | One backend for everything | 1x | 1 |
+| **ensemble** | 2 backends research in parallel, different judge | ~1.5x | 2 |
+| **adversarial** | Research + critique + adjudication | ~1.3x | 2 |
+| **parallel** | All backends independently, best wins | Nx | 2+ |
+| **serial** | Cheap backend drafts, precise one refines | ~1.5x | 2 |
+| **specialist** | Route dimensions to best-fit backend | 1x | 2+ |
+
+### When to Use Each Strategy
+
+| Strategy | Recommended When | Not Recommended When |
+|----------|-----------------|---------------------|
+| **single** | Quick exploration, one provider available, cost-sensitive | Accuracy matters, you have 2+ backends |
+| **ensemble** | Default for quality research. Independent replication catches what one backend misses. Blind review eliminates self-confirmation bias | Only 1 backend available, tight budget |
+| **adversarial** | Topics where LLMs hallucinate (pricing, benchmarks, limits). The critique phase catches factual errors before scoring | Topic is subjective (no "right answer" to fact-check), tight budget |
+| **parallel** | High-stakes research where completeness is critical. Each backend has different training data and blind spots | Budget-constrained (cost scales linearly with backend count) |
+| **serial** | Depth over breadth. Pairs a fast/cheap drafter with a precise refiner. Good when one backend is free (gemini) | Both backends are expensive (pays for two full research passes) |
+| **specialist** | Dimensions are heterogeneous (some need code, some need pricing, some need reasoning). No cost increase — just smarter routing | All dimensions are similar, only 1 backend available |
+
+### Practical Recommendations
+
+**2 backends (claude + codex)** — most users:
+- Use **ensemble** (default) for general research
+- Use **adversarial** when accuracy is critical
+- Use **serial** when you want depth (codex drafts, claude refines)
+
+**3 backends (claude + codex + gemini)** — ideal:
+- Use **ensemble** with codex + gemini researching, claude judging
+- True three-way provider separation eliminates all bias
+- Gemini free tier handles utility/compression for zero cost
+
+**1 backend (claude only)** — getting started:
+- Use **single**, the only option. Still effective — scored 82.0 in testing
+
+**Copilot caveat**: copilot is a coding agent and cannot return structured
+JSON. Use it **only as a research backend** in multi-backend strategies
+where claude or codex handles hypothesis + judging.
 
 ### Ensemble Strategy
 
