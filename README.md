@@ -27,6 +27,30 @@ Each iteration produces a scored, self-contained markdown file. Findings that
 beat the current best are merged into a growing knowledge base. On exit
 (`Ctrl+C`) or via `--synthesize`, a final report is generated.
 
+## When to Use This Framework
+
+### It Shines When
+
+| Use Case | Why It Works |
+|----------|-------------|
+| **Technology comparison** ("API Gateway vs ALB vs CloudFront for this pattern") | Iterative exploration covers multiple dimensions; scoring ensures each iteration adds new insight rather than repeating known facts |
+| **Architecture decision records** | Produces a scored, evidence-backed report with trade-offs, gaps, and ranked recommendations — ready to share with a team |
+| **Pre-project research** ("What should I know before building X?") | Autonomous loop explores dimensions you wouldn't think to ask about; discovered gaps seed new dimensions automatically |
+| **Vendor/tool evaluation** | Multi-backend strategies let different AI providers research independently, reducing provider-specific bias in the findings |
+| **Deep-dive on unfamiliar domain** | Compound knowledge: each iteration reads the accumulated knowledge base, so later iterations build on earlier findings rather than starting from scratch |
+| **Compliance/security landscape mapping** | Systematic dimension coverage with scoring ensures nothing is skipped; resume support lets you run multiple sessions over days |
+
+### Not Recommended When
+
+| Use Case | Why It Doesn't Fit | Better Alternative |
+|----------|-------------------|-------------------|
+| **Building a working POC** | Framework researches knowledge, doesn't write/run/test code | Use Claude Code or Codex directly to build the POC, then use autoresearch to research the design decisions |
+| **Quick one-off question** | The loop overhead (hypothesis + research + judge) is ~3 minutes per iteration minimum | Just ask Claude/Codex directly |
+| **Real-time data** (stock prices, live metrics) | LLM web search is not real-time; findings are point-in-time snapshots | Use APIs + dashboards |
+| **Subjective/creative tasks** (naming, copywriting) | The scoring system rewards factual depth and evidence — not creativity | Use an LLM interactively |
+| **Code generation or refactoring** | The execute phase produces markdown findings, not runnable code | Use the AI coding CLI directly |
+| **Small, well-defined questions** ("What's the max Lambda timeout?") | One search answers it; the iterative loop adds no value | Single prompt |
+
 ## Architecture
 
 ### Main Loop
