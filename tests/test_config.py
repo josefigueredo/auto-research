@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import BackendsConfig, ExecutionConfig, ResearchConfig, ScoringConfig, StrategyConfig
+from src.config import BackendsConfig, ExecutionConfig, MethodologyConfig, ResearchConfig, ScoringConfig, StrategyConfig
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +81,15 @@ class TestScoringConfig:
             sc.min_dimensions_per_iteration = 99
 
 
+class TestMethodologyConfig:
+    def test_defaults(self):
+        mc = MethodologyConfig()
+        assert mc.question == ""
+        assert mc.scope == ""
+        assert mc.inclusion_criteria == ()
+        assert mc.recency_days == 0
+
+
 # ---------------------------------------------------------------------------
 # ExecutionConfig defaults
 # ---------------------------------------------------------------------------
@@ -122,6 +131,31 @@ class TestResearchConfigFromYaml:
         assert cfg.execution.timeout_seconds == 120
         assert cfg.execution.model == "opus"
         assert cfg.execution.max_budget_per_call == 1.25
+
+    def test_methodology_config(self, tmp_path: Path):
+        p = tmp_path / "methodology.yaml"
+        p.write_text(textwrap.dedent("""\
+            research:
+              topic: "Test"
+              methodology:
+                question: "What is the best option?"
+                scope: "Architectural decision support"
+                inclusion_criteria:
+                  - official docs
+                exclusion_criteria:
+                  - anonymous forum posts
+                preferred_source_types:
+                  - vendor docs
+                  - standards
+                recency_days: 180
+        """), encoding="utf-8")
+        cfg = ResearchConfig.from_yaml(p)
+        assert cfg.methodology.question == "What is the best option?"
+        assert cfg.methodology.scope == "Architectural decision support"
+        assert cfg.methodology.inclusion_criteria == ("official docs",)
+        assert cfg.methodology.exclusion_criteria == ("anonymous forum posts",)
+        assert cfg.methodology.preferred_source_types == ("vendor docs", "standards")
+        assert cfg.methodology.recency_days == 180
 
     def test_minimal_config_uses_defaults(self, minimal_yaml: Path):
         cfg = ResearchConfig.from_yaml(minimal_yaml)

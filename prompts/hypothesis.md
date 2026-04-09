@@ -4,6 +4,10 @@ You are an autonomous research strategist.
 
 {topic}
 
+## Methodology
+
+{methodology}
+
 ## What We Already Know
 
 {knowledge_summary}

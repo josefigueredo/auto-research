@@ -11,6 +11,7 @@ from src.strategy import (
     CritiqueResult,
     EnsembleStrategy,
     ParallelStrategy,
+    ResearchCandidate,
     ResearchResult,
     SerialStrategy,
     SingleStrategy,
@@ -125,13 +126,13 @@ class TestSingleStrategy:
 # ---------------------------------------------------------------------------
 
 class TestEnsembleStrategy:
-    def test_parallel_execution(self):
+    def test_parallel_execution_returns_candidates(self):
         s = _strategy(EnsembleStrategy, research=("claude", "codex"), stagger_seconds=0)
         invoke = _make_invoke_per_backend({"claude": "short", "codex": "much longer findings"})
         result = s.execute_research("prompt", invoke)
-        # Should pick the longest
-        assert result.findings == "much longer findings"
-        assert result.backend_name == "codex"
+        assert result.findings == ""
+        assert result.backend_name == "multiple"
+        assert [candidate.backend_name for candidate in result.candidates] == ["claude", "codex"]
 
     def test_all_fail(self):
         s = _strategy(EnsembleStrategy, research=("claude", "codex"), stagger_seconds=0)
@@ -139,13 +140,12 @@ class TestEnsembleStrategy:
         assert result.findings == ""
         assert result.backend_name == "none"
 
-    def test_union_merge(self):
+    def test_union_mode_still_returns_candidates(self):
         s = _strategy(EnsembleStrategy, research=("claude", "codex"), merge_mode="union", stagger_seconds=0)
         invoke = _make_invoke_per_backend({"claude": "finding A", "codex": "finding B"})
         result = s.execute_research("prompt", invoke)
-        assert "finding A" in result.findings
-        assert "finding B" in result.findings
-        assert result.backend_name == "merged"
+        assert result.findings == ""
+        assert len(result.candidates) == 2
 
     def test_judge_isolation(self):
         s = _strategy(EnsembleStrategy, research=("codex", "gemini"), judge="claude")
@@ -193,7 +193,7 @@ class TestAdversarialStrategy:
 # ---------------------------------------------------------------------------
 
 class TestParallelStrategy:
-    def test_picks_longest(self):
+    def test_returns_candidates(self):
         s = _strategy(ParallelStrategy, research=("claude", "codex", "gemini"), stagger_seconds=0)
         invoke = _make_invoke_per_backend({
             "claude": "a",
@@ -201,8 +201,9 @@ class TestParallelStrategy:
             "gemini": "ccc",
         })
         result = s.execute_research("prompt", invoke)
-        assert result.findings == "ccc"
-        assert result.backend_name == "gemini"
+        assert result.findings == ""
+        assert result.backend_name == "multiple"
+        assert len(result.candidates) == 3
 
     def test_all_fail(self):
         s = _strategy(ParallelStrategy, research=("claude", "codex"), stagger_seconds=0)

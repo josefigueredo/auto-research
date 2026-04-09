@@ -11,9 +11,19 @@ research:
     - "Second dimension to explore"
     # Add as many as needed. The agent will also discover new ones.
 
+  methodology:
+    question: ""              # Optional explicit framing question
+    scope: ""                 # Optional scope / intended audience / boundaries
+    inclusion_criteria: []    # Optional preferred evidence/source criteria
+    exclusion_criteria: []    # Optional evidence/source types to avoid
+    preferred_source_types: []  # Optional ordered preferences (e.g. official docs, standards)
+    recency_days: 0           # Optional freshness target for unstable facts
+    # Tip: combine this with prompts that require source URLs and confidence
+    # labels so the run can produce stronger claims.json / citations.json output.
+
   scoring:
     min_dimensions_per_iteration: 1
-    target_dimensions_total: 10
+    target_dimensions_total: 10   # stop after this many dimensions have been explored
     evidence_types:
       - comparison_table
       - pricing_data
@@ -22,7 +32,7 @@ research:
       - trade_off_analysis
 
   execution:
-    max_iterations: 0       # 0 = infinite
+    max_iterations: 0       # 0 = no iteration cap; target_dimensions_total can still stop the run
     compress_every: 5       # compress knowledge base every N iterations
     allowed_tools: "WebSearch,WebFetch,Read,Bash,Glob,Grep"
     max_turns: 10           # max agent turns per research call
@@ -63,6 +73,9 @@ research:
     #   Default:     gpt-5.4       (set in ~/.codex/config.toml)
     #   Note:        Set features.remote_models = true in config.toml
     #                Model availability varies by account type (ChatGPT vs API)
+    #   Operational: strong results, but can consume a lot of tokens even on
+    #                small smoke tests; prefer Claude when you want the cheapest
+    #                sanity-check runs
     #
     # gemini (Google Gemini CLI):
     #   Default:     gemini-2.5-flash

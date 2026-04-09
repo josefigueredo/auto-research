@@ -5,6 +5,10 @@ senior AWS cloud architect.
 
 {topic}
 
+## Methodology
+
+{methodology}
+
 ## Accumulated Knowledge
 
 {knowledge_base}
@@ -23,6 +27,9 @@ Produce a comprehensive, well-structured report that:
 4. Includes a decision framework: "Use X when... Use Y when..."
 5. Lists concrete recommendations ranked by confidence level.
 6. Closes with known gaps and areas for further investigation.
+7. Call out unresolved questions or weakly-supported claims explicitly.
+8. If there are competing recommendations, state the contradiction clearly instead of silently collapsing it.
 
 Write for an architect who will use this to make real infrastructure
-decisions. Be specific, cite numbers, and avoid generic advice.
+decisions. Be specific, cite numbers, include source URLs where available,
+and avoid generic advice.

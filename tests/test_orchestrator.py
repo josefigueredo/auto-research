@@ -11,6 +11,8 @@ from src.backends import AgentResponse, Backend, CallOptions
 from src.config import ExecutionConfig, ResearchConfig, ScoringConfig
 from src.orchestrator import AutoResearcher
 from src.prompts import render as _render
+from src.scorer import IterationScore
+from src.strategy import ResearchCandidate
 
 
 # ---------------------------------------------------------------------------
@@ -103,17 +105,44 @@ class TestRender:
 
 class TestAutoResearcherSetup:
     def test_setup_creates_dirs(self, researcher):
-        researcher._setup()
+        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher._setup()
         assert researcher.output_dir.exists()
         assert researcher.iterations_dir.exists()
         assert researcher.results_path.exists()
+        assert researcher.manifest_path.exists()
+        assert researcher.methods_path.exists()
 
     def test_setup_writes_tsv_header(self, researcher):
-        researcher._setup()
+        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher._setup()
         content = researcher.results_path.read_text(encoding="utf-8")
         assert "iteration" in content
         assert "dimension" in content
         assert "total_score" in content
+
+    def test_setup_writes_run_manifest(self, researcher):
+        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher._setup()
+        manifest = json.loads(researcher.manifest_path.read_text(encoding="utf-8"))
+        assert manifest["run"]["status"] == "initialized"
+        assert manifest["project"]["version"] == "0.2.0"
+        assert manifest["environment"]["git_commit"] == "abc123"
+
+    def test_setup_writes_methods_artifact(self, researcher):
+        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher._setup()
+        methods = researcher.methods_path.read_text(encoding="utf-8")
+        assert "# Research Methods" in methods
+        assert "Test goal" in methods
 
     def test_resume_empty_dir(self, researcher):
         researcher._setup()
@@ -146,6 +175,118 @@ class TestAutoResearcherSetup:
         assert researcher.best_scores["Dim A"] == 74.0
         assert "Dim A" in researcher.explored_dimensions
         assert len(researcher.results) == 2
+
+    def test_resume_restores_discovered_dimensions_from_results(self, researcher):
+        researcher._setup()
+        (researcher.iterations_dir / "iter_001.md").write_text("# Iter 1", encoding="utf-8")
+        rows = [
+            {"iteration": "001", "timestamp": "T", "dimension": "Dim A",
+             "coverage_score": "80.0", "quality_score": "70.0", "total_score": "74.0",
+             "status": "keep", "hypothesis": "h", "discovered_gaps": json.dumps(["Gap X"]),
+             "cumulative_cost_usd": "0.1"}
+        ]
+        with open(researcher.results_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()), delimiter="\t")
+            writer.writeheader()
+            writer.writerows(rows)
+
+        researcher._resume()
+        assert "Gap X" in researcher.discovered_dimensions
+
+    def test_run_without_resume_does_not_restore_state(self, researcher):
+        researcher._setup()
+        (researcher.iterations_dir / "iter_001.md").write_text("# Iter 1", encoding="utf-8")
+        with patch.object(researcher, "_run_iteration", side_effect=KeyboardInterrupt), \
+             patch.object(researcher, "_generate_synthesis"), \
+             patch.object(researcher, "_print_summary"):
+            researcher.run()
+        assert researcher.iteration == 0
+
+    def test_run_with_resume_restores_state(self, research_config, fake_backend, tmp_path):
+        researcher = AutoResearcher(
+            config=research_config,
+            backend=fake_backend,
+            output_dir=tmp_path / "output",
+            resume=True,
+        )
+        researcher._setup()
+        (researcher.iterations_dir / "iter_001.md").write_text("# Iter 1", encoding="utf-8")
+        rows = [
+            {"iteration": "001", "timestamp": "T", "dimension": "Dim A",
+             "coverage_score": "80.0", "quality_score": "70.0", "total_score": "74.0",
+             "status": "keep", "hypothesis": "h", "cumulative_cost_usd": "0.1"}
+        ]
+        with open(researcher.results_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()), delimiter="\t")
+            writer.writeheader()
+            writer.writerows(rows)
+
+        with patch.object(researcher, "_run_iteration", side_effect=KeyboardInterrupt), \
+             patch.object(researcher, "_generate_synthesis"), \
+             patch.object(researcher, "_print_summary"), \
+             patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher.run()
+        assert researcher.iteration == 1
+        assert researcher.best_score == 74.0
+
+    def test_should_stop_on_target_dimensions_total(self, researcher):
+        researcher.explored_dimensions = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
+        assert researcher._should_stop() is True
+
+    def test_run_stops_when_target_dimensions_total_reached(self, research_config, fake_backend, tmp_path):
+        researcher = AutoResearcher(
+            config=research_config,
+            backend=fake_backend,
+            output_dir=tmp_path / "output",
+        )
+        researcher.explored_dimensions = [f"Dim {i}" for i in range(10)]
+        with patch.object(researcher, "_run_iteration") as mock_iter, \
+             patch.object(researcher, "_generate_synthesis"), \
+             patch.object(researcher, "_print_summary"), \
+             patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher.run()
+        mock_iter.assert_not_called()
+
+    def test_run_writes_metrics_artifact(self, researcher):
+        researcher.results = [{"iteration": "001", "dimension": "Dim A", "total_score": "80.0", "status": "keep"}]
+        researcher.explored_dimensions = ["Dim A"]
+        researcher.total_input_tokens = 10
+        researcher.total_output_tokens = 5
+        with patch.object(researcher, "_run_iteration", side_effect=KeyboardInterrupt), \
+             patch.object(researcher, "_generate_synthesis"), \
+             patch.object(researcher, "_print_summary"), \
+             patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher.run()
+        metrics = json.loads(researcher.metrics_path.read_text(encoding="utf-8"))
+        assert metrics["run_status"] == "interrupted"
+        assert metrics["explored_dimensions"] == ["Dim A"]
+        assert metrics["total_input_tokens"] == 10
+
+    def test_finalize_writes_provenance_artifacts(self, researcher):
+        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher._setup()
+        researcher._collect_provenance(
+            "Recommend Python for orchestration-heavy workloads. High confidence. https://docs.python.org/3/",
+            scope="iteration-001",
+            dimension="Developer experience",
+        )
+        researcher._finalize_run_artifacts()
+        claims = json.loads(researcher.claims_path.read_text(encoding="utf-8"))
+        citations = json.loads(researcher.citations_path.read_text(encoding="utf-8"))
+        links = json.loads(researcher.evidence_links_path.read_text(encoding="utf-8"))
+        contradictions = json.loads(researcher.contradictions_path.read_text(encoding="utf-8"))
+        assert any(claim["claim_type"] == "recommendation" for claim in claims)
+        assert any(citation["url"].startswith("https://docs.python.org") for citation in citations)
+        assert len(links) == len(claims)
+        assert contradictions == []
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +350,126 @@ class TestAutoResearcherHelpers:
         assert "Dim A" in table
         assert "85.0" in table
         assert "keep" in table
+
+    def test_candidate_selection_prefers_scored_best_over_longest(self, researcher):
+        candidates = [
+            ResearchCandidate(findings="long but weak", backend_name="claude", cost_usd=0.1),
+            ResearchCandidate(findings="short but strong", backend_name="codex", cost_usd=0.1),
+        ]
+
+        def fake_score(dimension, findings):
+            if findings == "long but weak":
+                return IterationScore(total=40.0)
+            return IterationScore(total=85.0)
+
+        with patch.object(researcher, "_score", side_effect=fake_score):
+            selected = researcher._select_candidate_findings("Dim A", candidates)
+
+        assert selected == "short but strong"
+
+    def test_candidate_union_merges_only_above_threshold(self, researcher):
+        researcher.config = ResearchConfig(
+            topic=researcher.config.topic,
+            goal=researcher.config.goal,
+            dimensions=researcher.config.dimensions,
+            scoring=researcher.config.scoring,
+            execution=ExecutionConfig(
+                **{
+                    **researcher.config.execution.__dict__,
+                    "strategy_config": researcher.config.execution.strategy_config.__class__(
+                        **{
+                            **researcher.config.execution.strategy_config.__dict__,
+                            "merge_mode": "union",
+                            "merge_threshold": 60.0,
+                        }
+                    ),
+                }
+            ),
+        )
+        candidates = [
+            ResearchCandidate(findings="finding A", backend_name="claude", cost_usd=0.1),
+            ResearchCandidate(findings="finding B", backend_name="codex", cost_usd=0.1),
+        ]
+
+        def fake_score(dimension, findings):
+            return IterationScore(total=75.0 if findings == "finding A" else 50.0)
+
+        with patch.object(researcher, "_score", side_effect=fake_score):
+            selected = researcher._select_candidate_findings("Dim A", candidates)
+
+        assert "finding A" in selected
+        assert "finding B" not in selected
+
+    def test_generate_hypothesis_includes_discovered_dimensions(self, researcher):
+        researcher.discovered_dimensions.append("New Gap")
+        researcher.explored_dimensions.append("Dim A")
+        with patch("src.orchestrator._render") as mock_render, \
+             patch.object(researcher, "_call_with", return_value=AgentResponse(
+                 text=json.dumps({"dimension": "New Gap", "questions": [], "approach": ""}),
+                 cost_usd=0.0,
+                 is_error=False,
+             )):
+            researcher._generate_hypothesis()
+
+        render_kwargs = mock_render.call_args.kwargs
+        assert "New Gap" in render_kwargs["unexplored_dimensions"]
+
+    def test_methodology_summary_formats_constraints(self, researcher):
+        researcher.config = ResearchConfig(
+            topic=researcher.config.topic,
+            goal=researcher.config.goal,
+            dimensions=researcher.config.dimensions,
+            methodology=type(researcher.config.methodology)(
+                question="Which option is best?",
+                scope="Architect review",
+                inclusion_criteria=("official docs",),
+                exclusion_criteria=("forum posts",),
+                preferred_source_types=("vendor docs",),
+                recency_days=180,
+            ),
+            scoring=researcher.config.scoring,
+            execution=researcher.config.execution,
+        )
+        summary = researcher._methodology_summary()
+        assert "Which option is best?" in summary
+        assert "official docs" in summary
+        assert "180 days" in summary
+
+    def test_merge_findings_queues_discovered_gaps(self, researcher):
+        score = IterationScore(gaps=["Gap One", "Gap Two"])
+        researcher._setup()
+        researcher._merge_findings("Dim A", "findings", score)
+        assert "Gap One" in researcher.discovered_dimensions
+        assert "Gap Two" in researcher.discovered_dimensions
+
+    def test_execute_research_tracks_per_backend_usage_from_candidates(self, researcher):
+        class FakeStrategy:
+            def execute_research(self, *args, **kwargs):
+                return type("X", (), {
+                    "findings": "",
+                    "backend_name": "multiple",
+                    "cost_usd": 0.3,
+                    "per_backend_costs": {"claude": 0.1, "codex": 0.2},
+                    "candidates": [
+                        ResearchCandidate(findings="candidate a", backend_name="claude", cost_usd=0.1, input_tokens=10, output_tokens=2),
+                        ResearchCandidate(findings="candidate b", backend_name="codex", cost_usd=0.2, input_tokens=20, output_tokens=3),
+                    ],
+                })()
+
+            def post_research(self, findings, invoke, *, timeout=600):
+                return None
+
+        researcher.strategy = FakeStrategy()
+        with patch("src.orchestrator._render", return_value="prompt"), \
+             patch.object(researcher, "_select_candidate_findings", return_value="candidate b"):
+            findings = researcher._execute_research("Dim A", [], "")
+
+        assert findings == "candidate b"
+        assert researcher.total_cost == pytest.approx(0.3)
+        assert researcher.total_input_tokens == 30
+        assert researcher.total_output_tokens == 5
+        assert researcher.per_backend_costs["claude"] == pytest.approx(0.1)
+        assert researcher.per_backend_costs["codex"] == pytest.approx(0.2)
 
 
 # ---------------------------------------------------------------------------

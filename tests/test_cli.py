@@ -110,6 +110,23 @@ class TestMain:
         result = main(["--config", str(config_file)])
         assert result == 0
         mock_instance.run.assert_called_once()
+        _, kwargs = mock_researcher_cls.call_args
+        assert kwargs["resume"] is False
+        assert kwargs["config_path"] == config_file
+
+    @patch("src.cli.get_strategy")
+    @patch("src.cli.get_backends")
+    @patch("src.cli.AutoResearcher")
+    @patch("src.cli.get_backend")
+    def test_resume_flag_passed_to_researcher(self, mock_get, mock_researcher_cls, mock_get_backends, mock_get_strat, config_file):
+        mock_backend, mock_strategy = self._mock_cli_deps()
+        mock_get.return_value = mock_backend
+        mock_get_backends.return_value = {"claude": mock_backend}
+        mock_get_strat.return_value = mock_strategy
+        mock_researcher_cls.return_value = MagicMock()
+        main(["--config", str(config_file), "--resume"])
+        _, kwargs = mock_researcher_cls.call_args
+        assert kwargs["resume"] is True
 
     @patch("src.cli.get_strategy")
     @patch("src.cli.get_backends")

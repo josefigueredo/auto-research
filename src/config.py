@@ -87,6 +87,27 @@ class StrategyConfig:
 
 
 @dataclass(frozen=True)
+class MethodologyConfig:
+    """Optional methodology guidance for more rigorous research runs.
+
+    Attributes:
+        question: Explicit research question framing.
+        scope: Boundaries or intended audience/scope of the investigation.
+        inclusion_criteria: Evidence or source types that should be preferred.
+        exclusion_criteria: Evidence or source types that should be avoided.
+        preferred_source_types: Ordered preferred source categories.
+        recency_days: Preferred freshness window for unstable information.
+    """
+
+    question: str = ""
+    scope: str = ""
+    inclusion_criteria: tuple[str, ...] = ()
+    exclusion_criteria: tuple[str, ...] = ()
+    preferred_source_types: tuple[str, ...] = ()
+    recency_days: int = 0
+
+
+@dataclass(frozen=True)
 class ScoringConfig:
     """Controls how each research iteration is scored.
 
@@ -156,6 +177,7 @@ class ResearchConfig:
     topic: str
     goal: str
     dimensions: tuple[str, ...]
+    methodology: MethodologyConfig = field(default_factory=MethodologyConfig)
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
 
@@ -194,6 +216,17 @@ class ResearchConfig:
 
         if "topic" not in research:
             raise ValueError("Config 'research' section must contain a 'topic' field")
+
+        # --- Methodology ------------------------------------------------------
+        methodology_raw: dict[str, Any] = research.get("methodology", {})
+        methodology = MethodologyConfig(
+            question=methodology_raw.get("question", ""),
+            scope=methodology_raw.get("scope", ""),
+            inclusion_criteria=tuple(methodology_raw.get("inclusion_criteria", [])),
+            exclusion_criteria=tuple(methodology_raw.get("exclusion_criteria", [])),
+            preferred_source_types=tuple(methodology_raw.get("preferred_source_types", [])),
+            recency_days=methodology_raw.get("recency_days", 0),
+        )
 
         # --- Scoring ----------------------------------------------------------
         scoring_raw: dict[str, Any] = research.get("scoring", {})
@@ -302,6 +335,7 @@ class ResearchConfig:
             topic=research["topic"],
             goal=research.get("goal", research["topic"]),
             dimensions=tuple(research.get("dimensions", [])),
+            methodology=methodology,
             scoring=scoring,
             execution=execution,
         )

@@ -33,6 +33,17 @@ log = logging.getLogger("autoresearch")
 # ---------------------------------------------------------------------------
 
 @dataclass
+class ResearchCandidate:
+    """A single backend-produced research candidate."""
+
+    findings: str
+    backend_name: str
+    cost_usd: float
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+@dataclass
 class ResearchResult:
     """Output from a strategy's execute phase.
 
@@ -48,6 +59,7 @@ class ResearchResult:
     backend_name: str
     cost_usd: float
     per_backend_costs: dict[str, float]
+    candidates: list[ResearchCandidate] | None = None
 
 
 @dataclass
@@ -218,6 +230,15 @@ class SingleStrategy(Strategy):
             backend_name=backend.name,
             cost_usd=resp.cost_usd,
             per_backend_costs={backend.name: resp.cost_usd},
+            candidates=[
+                ResearchCandidate(
+                    findings=resp.text,
+                    backend_name=backend.name,
+                    cost_usd=resp.cost_usd,
+                    input_tokens=resp.input_tokens,
+                    output_tokens=resp.output_tokens,
+                )
+            ] if not resp.is_error and resp.text else [],
         )
 
     def describe(self) -> str:
@@ -276,38 +297,28 @@ class EnsembleStrategy(Strategy):
         for name, resp in results:
             per_backend[name] = per_backend.get(name, 0.0) + resp.cost_usd
 
-        # Pick the longest non-error result as the best candidate
-        # (actual quality scoring happens later in the orchestrator)
         valid = [(name, resp) for name, resp in results if not resp.is_error and resp.text]
         if not valid:
             return ResearchResult(
                 findings="", backend_name="none", cost_usd=sum(per_backend.values()),
                 per_backend_costs=per_backend,
+                candidates=[],
             )
-
-        if self.strategy_config.merge_mode == "union":
-            # Merge all valid findings under labeled sections
-            merged = []
-            for name, resp in valid:
-                merged.append(f"<!-- source: {name} -->\n{resp.text}")
-            return ResearchResult(
-                findings="\n\n---\n\n".join(merged),
-                backend_name="merged",
-                cost_usd=sum(per_backend.values()),
-                per_backend_costs=per_backend,
-            )
-
-        # Default: pick the longest (proxy for most substantive)
-        best_name, best_resp = max(valid, key=lambda x: len(x[1].text))
-        log.info(
-            "Ensemble: picked %s (%d chars) from %d valid results.",
-            best_name, len(best_resp.text), len(valid),
-        )
         return ResearchResult(
-            findings=best_resp.text,
-            backend_name=best_name,
+            findings="",
+            backend_name="multiple",
             cost_usd=sum(per_backend.values()),
             per_backend_costs=per_backend,
+            candidates=[
+                ResearchCandidate(
+                    findings=resp.text,
+                    backend_name=name,
+                    cost_usd=resp.cost_usd,
+                    input_tokens=resp.input_tokens,
+                    output_tokens=resp.output_tokens,
+                )
+                for name, resp in valid
+            ],
         )
 
     def describe(self) -> str:
@@ -340,6 +351,15 @@ class AdversarialStrategy(Strategy):
             backend_name=backend.name,
             cost_usd=resp.cost_usd,
             per_backend_costs={backend.name: resp.cost_usd},
+            candidates=[
+                ResearchCandidate(
+                    findings=resp.text,
+                    backend_name=backend.name,
+                    cost_usd=resp.cost_usd,
+                    input_tokens=resp.input_tokens,
+                    output_tokens=resp.output_tokens,
+                )
+            ] if not resp.is_error and resp.text else [],
         )
 
     def post_research(
@@ -445,19 +465,24 @@ class ParallelStrategy(Strategy):
                 findings="", backend_name="none",
                 cost_usd=sum(per_backend.values()),
                 per_backend_costs=per_backend,
+                candidates=[],
             )
 
-        # Pick longest as best proxy
-        best_name, best_resp = max(valid, key=lambda x: len(x[1].text))
-        log.info(
-            "Parallel: picked %s (%d chars) from %d valid results.",
-            best_name, len(best_resp.text), len(valid),
-        )
         return ResearchResult(
-            findings=best_resp.text,
-            backend_name=best_name,
+            findings="",
+            backend_name="multiple",
             cost_usd=sum(per_backend.values()),
             per_backend_costs=per_backend,
+            candidates=[
+                ResearchCandidate(
+                    findings=resp.text,
+                    backend_name=name,
+                    cost_usd=resp.cost_usd,
+                    input_tokens=resp.input_tokens,
+                    output_tokens=resp.output_tokens,
+                )
+                for name, resp in valid
+            ],
         )
 
     def describe(self) -> str:
@@ -492,6 +517,15 @@ class SerialStrategy(Strategy):
                 backend_name=backend.name,
                 cost_usd=resp.cost_usd,
                 per_backend_costs={backend.name: resp.cost_usd},
+                candidates=[
+                    ResearchCandidate(
+                        findings=resp.text,
+                        backend_name=backend.name,
+                        cost_usd=resp.cost_usd,
+                        input_tokens=resp.input_tokens,
+                        output_tokens=resp.output_tokens,
+                    )
+                ] if not resp.is_error and resp.text else [],
             )
 
         drafter = research[0]
@@ -511,6 +545,7 @@ class SerialStrategy(Strategy):
                 findings="", backend_name=drafter.name,
                 cost_usd=sum(per_backend.values()),
                 per_backend_costs=per_backend,
+                candidates=[],
             )
 
         # Phase 2: Refine
@@ -544,6 +579,15 @@ class SerialStrategy(Strategy):
                 backend_name=drafter.name,
                 cost_usd=sum(per_backend.values()),
                 per_backend_costs=per_backend,
+                candidates=[
+                    ResearchCandidate(
+                        findings=draft_resp.text,
+                        backend_name=drafter.name,
+                        cost_usd=draft_resp.cost_usd,
+                        input_tokens=draft_resp.input_tokens,
+                        output_tokens=draft_resp.output_tokens,
+                    )
+                ],
             )
 
         return ResearchResult(
@@ -551,6 +595,22 @@ class SerialStrategy(Strategy):
             backend_name=f"{drafter.name}+{refiner.name}",
             cost_usd=sum(per_backend.values()),
             per_backend_costs=per_backend,
+            candidates=[
+                ResearchCandidate(
+                    findings=draft_resp.text,
+                    backend_name=drafter.name,
+                    cost_usd=draft_resp.cost_usd,
+                    input_tokens=draft_resp.input_tokens,
+                    output_tokens=draft_resp.output_tokens,
+                ),
+                ResearchCandidate(
+                    findings=refine_resp.text,
+                    backend_name=refiner.name,
+                    cost_usd=refine_resp.cost_usd,
+                    input_tokens=refine_resp.input_tokens,
+                    output_tokens=refine_resp.output_tokens,
+                ),
+            ],
         )
 
     def describe(self) -> str:
@@ -613,6 +673,15 @@ class SpecialistStrategy(Strategy):
             backend_name=backend.name,
             cost_usd=resp.cost_usd,
             per_backend_costs={backend.name: resp.cost_usd},
+            candidates=[
+                ResearchCandidate(
+                    findings=resp.text,
+                    backend_name=backend.name,
+                    cost_usd=resp.cost_usd,
+                    input_tokens=resp.input_tokens,
+                    output_tokens=resp.output_tokens,
+                )
+            ] if not resp.is_error and resp.text else [],
         )
 
     def describe(self) -> str:

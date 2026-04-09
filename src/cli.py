@@ -155,6 +155,8 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=output_dir,
         backends=backends,
         strategy=strategy,
+        resume=args.resume,
+        config_path=config_path,
     )
 
     try:

@@ -7,6 +7,22 @@ on any topic. Supports **Claude**, **Codex**, **Gemini**, and **Copilot** backen
 with **multi-backend strategies** for scientific validation: ensemble research,
 adversarial review, serial refinement, and specialist routing.
 
+## Current Status
+
+The project now includes:
+
+- explicit `--resume` semantics
+- score-based multi-candidate adjudication for ensemble/parallel strategies
+- discovered-dimension queueing with resume persistence
+- per-backend cost/token accounting
+- reproducibility artifacts (`run_manifest.json`, `metrics.json`, `methods.md`)
+- lightweight academic/provenance artifacts (`claims.json`, `citations.json`,
+  `evidence_links.json`, `contradictions.json`)
+
+Test status at the time of this update:
+
+- **216 passing tests**
+
 ## The Pattern
 
 Karpathy's original autoresearch runs an infinite loop on a GPU: modify code,
@@ -24,8 +40,10 @@ LOOP FOREVER:
 ```
 
 Each iteration produces a scored, self-contained markdown file. Findings that
-beat the current best are merged into a growing knowledge base. On exit
-(`Ctrl+C`) or via `--synthesize`, a final report is generated.
+beat the current best are merged into a growing knowledge base. The loop stops
+when you interrupt it, when `max_iterations` is reached, or when
+`target_dimensions_total` explored dimensions have been covered. On exit or via
+`--synthesize`, a final report is generated.
 
 ## When to Use This Framework
 
@@ -35,7 +53,7 @@ beat the current best are merged into a growing knowledge base. On exit
 |----------|-------------|
 | **Technology comparison** ("API Gateway vs ALB vs CloudFront for this pattern") | Iterative exploration covers multiple dimensions; scoring ensures each iteration adds new insight rather than repeating known facts |
 | **Architecture decision records** | Produces a scored, evidence-backed report with trade-offs, gaps, and ranked recommendations — ready to share with a team |
-| **Pre-project research** ("What should I know before building X?") | Autonomous loop explores dimensions you wouldn't think to ask about; discovered gaps seed new dimensions automatically |
+| **Pre-project research** ("What should I know before building X?") | Autonomous loop explores dimensions you wouldn't think to ask about; judge-identified gaps can seed new dimensions during the current run |
 | **Vendor/tool evaluation** | Multi-backend strategies let different AI providers research independently, reducing provider-specific bias in the findings |
 | **Deep-dive on unfamiliar domain** | Compound knowledge: each iteration reads the accumulated knowledge base, so later iterations build on earlier findings rather than starting from scratch |
 | **Compliance/security landscape mapping** | Systematic dimension coverage with scoring ensures nothing is skipped; resume support lets you run multiple sessions over days |
@@ -102,7 +120,7 @@ flowchart TD
     COMPRESS -->|No| LOOP
     SHRINK --> LOOP
 
-    LOOP -.->|Ctrl+C or max_iterations| SYNTH[Generate synthesis.md<br>primary backend]
+    LOOP -.->|Ctrl+C or stop criteria| SYNTH[Generate synthesis.md<br>primary backend]
     SYNTH --> DONE([Print summary + exit])
 
     style LOOP fill:#f59e0b,color:#000
@@ -144,7 +162,7 @@ sequenceDiagram
         R-->>S: Markdown findings
     else Ensemble / Parallel
         S->>R: backends research in parallel
-        R-->>S: multiple findings (pick best or merge)
+        R-->>S: multiple findings (shortlist, score, select/merge)
     else Serial
         S->>R: drafter backend researches
         R-->>S: draft findings
@@ -175,7 +193,8 @@ sequenceDiagram
         O->>FS: Write iter_NNN.md (status: discard)
     end
 
-    O->>FS: Append row to results.tsv
+    O->>FS: Append row to results.tsv<br>including gaps + token totals
+    O->>FS: Update metrics.json + run_manifest.json
 ```
 
 ## Quick Start
@@ -205,6 +224,50 @@ uv run python -m src.cli --config configs/aws_api_gateway.yaml --resume
 uv run python -m src.cli --config configs/aws_api_gateway.yaml --synthesize
 ```
 
+## Practical Backend Notes
+
+- **Claude** is still the safest default for smoke tests and general single-backend
+  runs.
+- **Codex** can produce strong results, but real validation showed **very high token
+  usage even on a 1-iteration smoke test**. Prefer it for higher-value research,
+  not for the cheapest sanity checks.
+- **Gemini** is attractive for utility/compression or low-cost parallel research,
+  but free-tier rate limiting can dominate wall-clock time.
+- **Copilot** is best treated as a research-only participant in multi-backend
+  strategies, not as the judge/hypothesis backend.
+
+## Methodology Support
+
+The framework now supports an optional `methodology:` section in the research
+config. Use it when you want runs to be more reproducible or more academically
+defensible.
+
+Supported fields:
+
+- `question` — explicit research question framing
+- `scope` — intended scope/audience/boundaries
+- `inclusion_criteria` — evidence you want preferred
+- `exclusion_criteria` — evidence you want avoided
+- `preferred_source_types` — ordered source preferences
+- `recency_days` — freshness preference for unstable facts
+
+These constraints are:
+- written to `methods.md`
+- included in `run_manifest.json`
+- threaded into hypothesis, research, evaluation, and synthesis prompts
+
+## Provenance and Claim Artifacts
+
+The framework now emits first-pass provenance artifacts:
+
+- `claims.json` — extracted claims with claim type, confidence label, dimension, and cited URLs
+- `citations.json` — extracted URL references with inferred source type and retrieval timestamp
+- `evidence_links.json` — heuristic links from claims to citations with support-strength labels
+- `contradictions.json` — detected recommendation conflicts for human review
+
+These artifacts are intentionally lightweight. They are a bridge toward more
+academic workflows, not a full scholarly citation engine yet.
+
 ## Requirements
 
 - Python 3.10+
@@ -224,6 +287,7 @@ autoresearch/
         orchestrator.py     AutoResearcher class — the infinite loop + model translation
         scorer.py           Heuristic scoring + LLM-as-judge
         strategy.py         Multi-backend strategies (ensemble, adversarial, serial, etc.)
+        provenance.py       Claim/citation extraction, evidence links, contradiction checks
         prompts.py          Template loading and rendering
         backends/
             __init__.py     Re-exports all public symbols
@@ -250,16 +314,23 @@ autoresearch/
     tests/
         test_backends/      Per-backend tests (independently runnable)
         test_config.py      Config loading and validation
-        test_orchestrator.py  Research loop, scoring, resume
+        test_orchestrator.py  Research loop, scoring, resume, stop criteria, accounting
         test_strategy.py    Multi-backend strategy logic
         test_scorer.py      Heuristic + judge scoring
         test_cli.py         CLI argument parsing
     output/                 Runtime artifacts (gitignored)
         <config-name>/
-            results.tsv         Experiment log (TSV)
+            results.tsv         Experiment log (TSV: scores, gaps, cumulative cost/tokens)
             knowledge_base.md   Accumulated findings
             iterations/         Per-iteration markdown files
             synthesis.md        Final synthesized report
+            run_manifest.json   Reproducibility metadata (config snapshot, env, versions)
+            metrics.json        Machine-readable run summary and per-backend usage
+            methods.md         Human-readable research method + runtime settings
+            claims.json        Extracted claims with type/confidence metadata
+            citations.json     Extracted URLs with inferred source types
+            evidence_links.json Heuristic claim-to-citation links with support labels
+            contradictions.json Potentially conflicting recommendations for review
 ```
 
 ## Creating a New Research Topic
@@ -307,7 +378,7 @@ autoresearch/
 | `backends.judge` | same as primary | Backend for scoring (blind review) |
 | `backends.utility` | same as primary | Backend for compression (cheapest) |
 | `min_dimensions_per_iteration` | `1` | Min dimensions expected per iteration |
-| `target_dimensions_total` | `10` | Target total dimensions to cover |
+| `target_dimensions_total` | `10` | Stop once this many dimensions have been explored (in addition to `max_iterations`) |
 | `evidence_types` | see template | Evidence types for heuristic scoring |
 
 ### Backends: Models, Capabilities, and Limitations
@@ -471,7 +542,7 @@ flowchart LR
     A --> RA[Findings A]
     B --> RB[Findings B]
 
-    RA --> SEL{Pick best<br>or merge}
+    RA --> SEL{Shortlist<br>+ judge adjudication}
     RB --> SEL
 
     SEL --> FINDINGS[Best Findings]
@@ -483,9 +554,10 @@ flowchart LR
     style SEL fill:#f59e0b,color:#000
 ```
 
-Two backends research the same dimension independently.  A **different**
-backend scores the findings without knowing which backend produced them
-— blind peer review.  Eliminates self-confirmation bias.
+Two backends research the same dimension independently. A **different**
+backend scores the shortlisted findings without knowing which backend
+produced them — blind peer review. In `union` mode, only candidates
+above the configured threshold are merged.
 
 ### Adversarial Strategy
 
@@ -613,7 +685,7 @@ flowchart TD
 ```
 
 - **Crash recovery**: Dimensions are retried up to 3 times, then skipped.
-- **Resume**: `--resume` rebuilds state from existing iteration files and TSV.
+- **Resume**: `--resume` explicitly rebuilds state from existing iteration files and TSV.
 - **Rate limiting**: Detects rate limit events (Claude), backs off 30-120s.
 - **Budget cap**: `--max-budget-usd` per call prevents runaway costs (Claude).
 - **Large prompts**: Piped via stdin to avoid the Windows 32KB command-line limit.

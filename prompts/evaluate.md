@@ -6,6 +6,10 @@ exceptional work.
 
 {topic}
 
+## Methodology
+
+{methodology}
+
 ## Dimension Investigated
 
 {dimension}

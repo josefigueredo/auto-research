@@ -5,6 +5,10 @@ architect making real infrastructure decisions.
 
 {topic}
 
+## Methodology
+
+{methodology}
+
 ## This Iteration's Focus
 
 **Dimension:** {dimension}
@@ -33,6 +37,8 @@ architect making real infrastructure decisions.
 4. Identify trade-offs and edge cases, not just feature lists.
 5. Note anything surprising or counter-intuitive.
 6. Flag information that may be outdated or region-specific.
+7. Include explicit source URLs for important factual claims whenever possible.
+8. Mark major conclusions with confidence labels: High confidence, Medium confidence, Low confidence, or Unresolved.
 
 ## Required Output Structure
 
@@ -43,12 +49,17 @@ Detailed findings for this dimension. Be thorough and specific.
 ### Evidence
 
 Concrete data points: pricing tiers, request limits, latency numbers,
-benchmark results. Cite sources where possible.
+benchmark results. Cite sources with explicit URLs where possible.
 
 ### Trade-offs
 
 Nuanced analysis of when each option is better or worse. Avoid blanket
 recommendations without context.
+
+### Confidence
+
+State the confidence level for the main conclusions and explain any unresolved
+or weakly supported claims.
 
 ### New Questions
 

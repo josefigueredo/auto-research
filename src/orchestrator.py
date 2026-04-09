@@ -9,14 +9,19 @@ headless mode.
 from __future__ import annotations
 
 import csv
+import importlib.metadata
 import json
 import logging
+import platform
+import subprocess
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .backends import CLAUDE_SHORTNAMES, AgentResponse, Backend, CallOptions, get_backends
 from .config import ResearchConfig
+from .provenance import detect_claim_conflicts, extract_citations, extract_claims, link_claims_to_citations
 from .prompts import render as _render
 from .scorer import (
     IterationScore,
@@ -26,7 +31,7 @@ from .scorer import (
     parse_judge_response,
     quality_score_from_judge,
 )
-from .strategy import Strategy, get_strategy
+from .strategy import ResearchCandidate, Strategy, get_strategy
 
 log = logging.getLogger("autoresearch")
 
@@ -65,14 +70,25 @@ class AutoResearcher:
         output_dir: Path,
         backends: dict[str, Backend] | None = None,
         strategy: Strategy | None = None,
+        resume: bool = False,
+        config_path: Path | None = None,
     ) -> None:
         self.config = config
         self.backend = backend  # kept for backward compat + summary
+        self.resume = resume
+        self.config_path = config_path
         self.output_dir = output_dir
         self.iterations_dir = output_dir / "iterations"
         self.results_path = output_dir / "results.tsv"
         self.kb_path = output_dir / "knowledge_base.md"
         self.synthesis_path = output_dir / "synthesis.md"
+        self.methods_path = output_dir / "methods.md"
+        self.manifest_path = output_dir / "run_manifest.json"
+        self.metrics_path = output_dir / "metrics.json"
+        self.claims_path = output_dir / "claims.json"
+        self.citations_path = output_dir / "citations.json"
+        self.evidence_links_path = output_dir / "evidence_links.json"
+        self.contradictions_path = output_dir / "contradictions.json"
 
         # Multi-backend support
         if backends is None:
@@ -96,6 +112,7 @@ class AutoResearcher:
         self.best_scores: dict[str, float] = {}
         self.knowledge_base: str = ""
         self.explored_dimensions: list[str] = []
+        self.discovered_dimensions: list[str] = []
         self.total_cost: float = 0.0
         self.total_input_tokens: int = 0
         self.total_output_tokens: int = 0
@@ -103,6 +120,11 @@ class AutoResearcher:
         self.per_backend_tokens: dict[str, dict[str, int]] = {}
         self.results: list[dict[str, str]] = []
         self._dimension_attempts: dict[str, int] = {}
+        self._run_started_at: str | None = None
+        self._run_completed_at: str | None = None
+        self._run_status: str = "initialized"
+        self._claims: list[dict[str, Any]] = []
+        self._citations: list[dict[str, Any]] = []
 
     def _call(self, prompt: str, **kwargs: Any) -> AgentResponse:
         """Invoke the default backend with config defaults.
@@ -188,12 +210,27 @@ class AutoResearcher:
             entry["input"] += resp.input_tokens
             entry["output"] += resp.output_tokens
 
+    def _track_candidate_usage(self, candidate: ResearchCandidate) -> None:
+        """Record usage for a strategy-produced research candidate."""
+        self._track_usage(
+            AgentResponse(
+                text=candidate.findings,
+                cost_usd=candidate.cost_usd,
+                is_error=False,
+                input_tokens=candidate.input_tokens,
+                output_tokens=candidate.output_tokens,
+            ),
+            candidate.backend_name,
+        )
+
     # -- Public API --------------------------------------------------------
 
     def run(self) -> None:
         """Start the research loop.  ``Ctrl+C`` triggers synthesis."""
         self._setup()
-        self._resume()
+        if self.resume:
+            self._resume()
+        self._run_status = "running"
 
         log.info(
             "Starting autoresearch [%s]: %s (%d dimensions configured)",
@@ -204,21 +241,43 @@ class AutoResearcher:
 
         try:
             while True:
-                if 0 < self.config.execution.max_iterations <= self.iteration:
-                    log.info("Reached max_iterations=%d, stopping.", self.iteration)
+                if self._should_stop():
                     break
                 self._run_iteration()
         except KeyboardInterrupt:
             log.info("Interrupted. Generating synthesis...")
+            self._run_status = "interrupted"
         finally:
+            if self._run_status == "running":
+                self._run_status = "completed"
             self._generate_synthesis()
+            self._finalize_run_artifacts()
             self._print_summary()
 
     def synthesize_only(self) -> None:
         """Generate a synthesis report from existing iteration data."""
         self._setup()
         self._resume()
+        self._run_status = "synthesis_only"
         self._generate_synthesis()
+        self._finalize_run_artifacts()
+
+    def _should_stop(self) -> bool:
+        """Return True when runtime stopping criteria have been met."""
+        if 0 < self.config.execution.max_iterations <= self.iteration:
+            log.info("Reached max_iterations=%d, stopping.", self.iteration)
+            return True
+
+        target = self.config.scoring.target_dimensions_total
+        if target > 0 and len(self.explored_dimensions) >= target:
+            log.info(
+                "Reached target_dimensions_total=%d with %d explored dimensions, stopping.",
+                target,
+                len(self.explored_dimensions),
+            )
+            return True
+
+        return False
 
     # -- Setup & resume ----------------------------------------------------
 
@@ -226,9 +285,13 @@ class AutoResearcher:
         """Create output directories and initialise results.tsv if needed."""
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.iterations_dir.mkdir(exist_ok=True)
+        if self._run_started_at is None:
+            self._run_started_at = datetime.now(timezone.utc).isoformat()
 
         if not self.results_path.exists():
             self._write_tsv_header()
+        self._write_methods()
+        self._write_run_manifest()
 
     def _resume(self) -> None:
         """Rebuild in-memory state from existing iteration files and TSV."""
@@ -263,6 +326,21 @@ class AutoResearcher:
                         
                         if score > self.best_score:
                             self.best_score = score
+
+                    gaps_raw = row.get("discovered_gaps", "")
+                    if gaps_raw:
+                        try:
+                            gaps = json.loads(gaps_raw)
+                        except (json.JSONDecodeError, TypeError):
+                            gaps = []
+                        for gap in gaps:
+                            if (
+                                gap
+                                and gap not in self.explored_dimensions
+                                and gap not in self.config.dimensions
+                                and gap not in self.discovered_dimensions
+                            ):
+                                self.discovered_dimensions.append(gap)
 
                     if dim and self._dimension_attempts.get(dim, 0) >= self.MAX_ATTEMPTS_PER_DIMENSION:
                         if dim not in self.explored_dimensions:
@@ -347,13 +425,14 @@ class AutoResearcher:
             ``rationale`` keys, or ``None`` if the call failed.
         """
         unexplored = [
-            d for d in self.config.dimensions
+            d for d in [*self.config.dimensions, *self.discovered_dimensions]
             if d not in self.explored_dimensions
         ]
 
         prompt = _render(
             "hypothesis.md",
             topic=self.config.topic,
+            methodology=self._methodology_summary(),
             knowledge_summary=self._kb_summary(),
             explored_dimensions=self._format_dimension_list(self.explored_dimensions),
             unexplored_dimensions=self._format_dimension_list(unexplored),
@@ -399,6 +478,7 @@ class AutoResearcher:
         prompt = _render(
             "research.md",
             topic=self.config.topic,
+            methodology=self._methodology_summary(),
             dimension=dimension,
             questions=formatted_questions,
             approach=approach or "Use web search and official documentation",
@@ -419,26 +499,90 @@ class AutoResearcher:
             **kwargs,
         )
 
-        self._track_cost(result.cost_usd, result.backend_name)
+        if result.candidates is not None:
+            for candidate in result.candidates:
+                self._track_candidate_usage(candidate)
+        else:
+            self._track_cost(result.cost_usd, result.backend_name)
 
-        if not result.findings:
+        findings = result.findings
+        if result.candidates and len(result.candidates) > 1:
+            findings = self._select_candidate_findings(dimension, result.candidates)
+        elif result.candidates and len(result.candidates) == 1 and not findings:
+            findings = result.candidates[0].findings
+
+        if not findings:
             log.error("Research call failed.")
             return ""
 
         # Post-research phase (e.g. adversarial critique)
         critique = self.strategy.post_research(
-            result.findings, self._invoke_for_strategy,
+            findings, self._invoke_for_strategy,
             timeout=self.config.execution.timeout_seconds,
         )
         if critique:
             self._track_cost(critique.cost_usd, critique.backend_name)
             # Append critique as context for the judge
-            result.findings += (
+            findings += (
                 f"\n\n---\n\n## Peer Review ({critique.backend_name})\n\n"
                 f"{critique.critique}"
             )
 
-        return result.findings
+        return findings
+
+    def _select_candidate_findings(
+        self,
+        dimension: str,
+        candidates: list[ResearchCandidate],
+    ) -> str:
+        """Select or merge the best findings from multiple backend candidates."""
+        if not candidates:
+            return ""
+
+        ranked = sorted(
+            candidates,
+            key=lambda c: heuristic_score(c.findings, self.config, self.explored_dimensions),
+            reverse=True,
+        )
+        merge_mode = self.config.execution.strategy_config.merge_mode
+        threshold = self.config.execution.strategy_config.merge_threshold
+
+        if merge_mode == "union":
+            selected: list[tuple[ResearchCandidate, IterationScore]] = []
+            for candidate in ranked:
+                score = self._score(dimension, candidate.findings)
+                if score.total >= threshold:
+                    selected.append((candidate, score))
+            if not selected:
+                return ""
+            selected.sort(key=lambda item: item[1].total, reverse=True)
+            log.info(
+                "Merged %d candidate findings above threshold %.1f for dimension '%s'.",
+                len(selected), threshold, dimension,
+            )
+            return "\n\n---\n\n".join(
+                f"<!-- source: {candidate.backend_name}; score: {score.total:.1f} -->\n{candidate.findings}"
+                for candidate, score in selected
+            )
+
+        shortlist = ranked[: min(2, len(ranked))]
+        best_candidate = shortlist[0]
+        best_score = -1.0
+
+        for candidate in shortlist:
+            score = self._score(dimension, candidate.findings)
+            if score.total > best_score:
+                best_candidate = candidate
+                best_score = score.total
+
+        log.info(
+            "Selected %s from %d candidates for dimension '%s' (score %.1f).",
+            best_candidate.backend_name,
+            len(candidates),
+            dimension,
+            best_score,
+        )
+        return best_candidate.findings
 
     # -- Phase 3: Score ----------------------------------------------------
 
@@ -457,6 +601,7 @@ class AutoResearcher:
             prompt = _render(
                 "evaluate.md",
                 topic=self.config.topic,
+                methodology=self._methodology_summary(),
                 dimension=dimension,
                 findings=findings[:_MAX_FINDINGS_CHARS],
                 knowledge_summary=self._kb_summary(),
@@ -497,7 +642,12 @@ class AutoResearcher:
         self.kb_path.write_text(self.knowledge_base, encoding="utf-8")
 
         for gap in score.gaps:
-            if gap not in self.explored_dimensions and gap not in self.config.dimensions:
+            if (
+                gap not in self.explored_dimensions
+                and gap not in self.config.dimensions
+                and gap not in self.discovered_dimensions
+            ):
+                self.discovered_dimensions.append(gap)
                 log.info("New dimension discovered: %s", gap)
 
     def _maybe_exhaust_dimension(self, dimension: str) -> None:
@@ -533,6 +683,7 @@ class AutoResearcher:
             f"---\n\n{findings}\n"
         )
         path.write_text(content, encoding="utf-8")
+        self._collect_provenance(findings, scope=f"iteration-{self.iteration:03d}", dimension=dimension)
 
     def _log_result(
         self,
@@ -552,6 +703,7 @@ class AutoResearcher:
             "total_score": f"{score.total:.1f}",
             "status": status,
             "hypothesis": hypothesis[:120],
+            "discovered_gaps": json.dumps(score.gaps),
             "cumulative_cost_usd": f"{self.total_cost:.3f}",
             "cumulative_input_tokens": str(self.total_input_tokens),
             "cumulative_output_tokens": str(self.total_output_tokens),
@@ -573,6 +725,7 @@ class AutoResearcher:
             "total_score",
             "status",
             "hypothesis",
+            "discovered_gaps",
             "cumulative_cost_usd",
             "cumulative_input_tokens",
             "cumulative_output_tokens",
@@ -624,6 +777,7 @@ class AutoResearcher:
         prompt = _render(
             "synthesize.md",
             topic=self.config.topic,
+            methodology=self._methodology_summary(),
             knowledge_base=self.knowledge_base,
             results_summary=results_summary,
         )
@@ -635,6 +789,7 @@ class AutoResearcher:
 
         if not resp.is_error and resp.text:
             self.synthesis_path.write_text(resp.text, encoding="utf-8")
+            self._collect_provenance(resp.text, scope="synthesis")
             log.info("Synthesis saved to %s", self.synthesis_path)
 
     # -- Helpers -----------------------------------------------------------
@@ -662,6 +817,27 @@ class AutoResearcher:
             return "(none)"
         return "\n".join(f"- {d}" for d in dims)
 
+    def _methodology_summary(self) -> str:
+        """Format methodology guidance for prompts and reporting."""
+        methodology = self.config.methodology
+        lines: list[str] = []
+        if methodology.question:
+            lines.append(f"- Question: {methodology.question}")
+        if methodology.scope:
+            lines.append(f"- Scope: {methodology.scope}")
+        if methodology.inclusion_criteria:
+            lines.append("- Inclusion criteria:")
+            lines.extend(f"  - {item}" for item in methodology.inclusion_criteria)
+        if methodology.exclusion_criteria:
+            lines.append("- Exclusion criteria:")
+            lines.extend(f"  - {item}" for item in methodology.exclusion_criteria)
+        if methodology.preferred_source_types:
+            lines.append("- Preferred source types:")
+            lines.extend(f"  - {item}" for item in methodology.preferred_source_types)
+        if methodology.recency_days > 0:
+            lines.append(f"- Prefer sources from the last {methodology.recency_days} days for unstable facts.")
+        return "\n".join(lines) if lines else "(No explicit methodology constraints.)"
+
     def _format_results_table(self) -> str:
         """Format the results log as a markdown table for synthesis prompts."""
         if not self.results:
@@ -675,6 +851,22 @@ class AutoResearcher:
                 f"| {r.get('status', '?')} |"
             )
         return "\n".join(lines)
+
+    def _write_methods(self) -> None:
+        """Write a human-readable methods artifact for the run."""
+        content = (
+            f"# Research Methods\n\n"
+            f"## Goal\n\n{self.config.goal}\n\n"
+            f"## Topic\n\n{self.config.topic}\n\n"
+            f"## Methodology\n\n{self._methodology_summary()}\n\n"
+            f"## Runtime\n\n"
+            f"- Strategy: {self.strategy.describe()}\n"
+            f"- Resume requested: {self.resume}\n"
+            f"- Max iterations: {self.config.execution.max_iterations}\n"
+            f"- Target dimensions total: {self.config.scoring.target_dimensions_total}\n"
+            f"- Allowed tools: {self.config.execution.allowed_tools or '(none)'}\n"
+        )
+        self.methods_path.write_text(content, encoding="utf-8")
 
     def _print_summary(self) -> None:
         """Print a session summary to stdout."""
@@ -698,3 +890,124 @@ class AutoResearcher:
         if self.synthesis_path.exists():
             print(f"  Synthesis:   {self.synthesis_path}")
         print("=" * 60)
+
+    def _finalize_run_artifacts(self) -> None:
+        """Write final manifest and metrics artifacts."""
+        self._run_completed_at = datetime.now(timezone.utc).isoformat()
+        self._write_run_manifest()
+        self._write_metrics()
+        self._write_provenance_artifacts()
+
+    def _write_run_manifest(self) -> None:
+        """Write a machine-readable manifest for reproducibility."""
+        payload = {
+            "project": {
+                "name": "autoresearch",
+                "version": self._package_version(),
+            },
+            "run": {
+                "status": self._run_status,
+                "started_at": self._run_started_at,
+                "completed_at": self._run_completed_at,
+                "resume_requested": self.resume,
+                "output_dir": str(self.output_dir.resolve()),
+            },
+            "config": {
+                "path": str(self.config_path.resolve()) if self.config_path else None,
+                "snapshot": asdict(self.config),
+            },
+            "strategy": {
+                "name": self.config.execution.strategy,
+                "description": self.strategy.describe(),
+            },
+            "environment": {
+                "python_version": platform.python_version(),
+                "platform": platform.platform(),
+                "git_commit": self._git_commit(),
+            },
+            "backends": {
+                name: {
+                    "cli": backend.cli_executable(),
+                    "version": self._cli_version(backend.cli_executable()),
+                }
+                for name, backend in self.backends.items()
+            },
+        }
+        self.manifest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def _write_metrics(self) -> None:
+        """Write machine-readable run metrics."""
+        payload = {
+            "run_status": self._run_status,
+            "iterations": self.iteration,
+            "best_score": self.best_score,
+            "explored_dimensions_count": len(self.explored_dimensions),
+            "explored_dimensions": self.explored_dimensions,
+            "discovered_dimensions": self.discovered_dimensions,
+            "total_cost_usd": self.total_cost,
+            "total_input_tokens": self.total_input_tokens,
+            "total_output_tokens": self.total_output_tokens,
+            "per_backend_costs": self.per_backend_costs,
+            "per_backend_tokens": self.per_backend_tokens,
+            "results": self.results,
+        }
+        self.metrics_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def _collect_provenance(self, text: str, *, scope: str, dimension: str = "") -> None:
+        """Collect claims and citations from generated content."""
+        retrieved_at = datetime.now(timezone.utc).isoformat()
+        for claim in extract_claims(text, scope=scope, dimension=dimension):
+            claim["id"] = f"{scope}-{claim['id']}"
+            self._claims.append(claim)
+        for citation in extract_citations(text, scope=scope, retrieved_at=retrieved_at):
+            citation["id"] = f"{scope}-{citation['id']}"
+            self._citations.append(citation)
+
+    def _write_provenance_artifacts(self) -> None:
+        """Write claim and citation artifacts."""
+        self.claims_path.write_text(json.dumps(self._claims, indent=2), encoding="utf-8")
+        self.citations_path.write_text(json.dumps(self._citations, indent=2), encoding="utf-8")
+        evidence_links = link_claims_to_citations(self._claims, self._citations)
+        contradictions = detect_claim_conflicts(self._claims)
+        self.evidence_links_path.write_text(json.dumps(evidence_links, indent=2), encoding="utf-8")
+        self.contradictions_path.write_text(json.dumps(contradictions, indent=2), encoding="utf-8")
+
+    @staticmethod
+    def _git_commit() -> str | None:
+        """Return the current git commit SHA if available."""
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        return None
+
+    @staticmethod
+    def _cli_version(executable: str) -> str | None:
+        """Return a CLI version string when available."""
+        try:
+            result = subprocess.run(
+                [executable, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        return None
+
+    @staticmethod
+    def _package_version() -> str | None:
+        """Return the installed package version if available."""
+        try:
+            return importlib.metadata.version("autoresearch")
+        except importlib.metadata.PackageNotFoundError:
+            return None
