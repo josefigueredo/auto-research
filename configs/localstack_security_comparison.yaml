@@ -1,0 +1,75 @@
+# LocalStack vs alternatives: security-first comparison for commercial production use.
+#
+# Constraint: we are a commercial company evaluating these for production
+# CI/CD pipelines. Security, licensing compliance, and supply chain risk
+# are non-negotiable — technical features are secondary if the tool
+# introduces legal or security exposure.
+#
+# Additional requirement: must support Terraform workflows (plan/apply
+# against local emulator in CI).
+#
+# Tools under evaluation:
+#   - LocalStack (free + Pro)
+#   - nahuelnucera/ministack
+#   - hectorvent/floci
+#   - moto (getmoto/moto)
+#
+# Strategy: adversarial with thorough critique — security claims need
+# aggressive fact-checking, not vendor trust.
+
+research:
+  topic: >
+    Security-first comparison of LocalStack, MiniStack (nahuelnucera/ministack),
+    Floci (hectorvent/floci), and Moto (getmoto/moto) for use in a commercial
+    company's production CI/CD pipelines with Terraform. Prioritize: licensing
+    compliance for commercial use, supply chain security, container image
+    provenance, network isolation, credential handling, and vulnerability
+    history. Must support Terraform plan/apply workflows against the local
+    emulator. Technical features are secondary — a tool that is functionally
+    excellent but legally or security-risky is disqualified.
+  goal: >
+    A security assessment report suitable for review by a CISO or security team.
+    Must include: licensing risk matrix, supply chain audit (image provenance,
+    dependency tree, signed images), network exposure analysis, credential
+    handling behavior, CVE/vulnerability history, Terraform compatibility
+    assessment, and a clear go/no-go recommendation per tool for commercial
+    production use with Terraform-based infrastructure.
+
+  dimensions:
+    - "Licensing: LocalStack BUSL vs free tier restrictions vs alternatives' licenses (MIT, Apache, AGPL) — commercial use implications and legal risk"
+    - "Supply chain security: Docker image provenance, base images, signed images, SBOM availability, dependency audit for each tool"
+    - "Network isolation: exposed ports, phone-home behavior, telemetry collection, data exfiltration risk in CI environments"
+    - "Credential handling: how each tool handles AWS credentials, secrets in env vars, credential leakage in logs or temp files"
+    - "CVE and vulnerability history: known vulnerabilities, patch response time, security advisory process, image scan results"
+    - "Container security: non-root execution, read-only filesystem support, seccomp/AppArmor profiles, minimal attack surface"
+    - "Terraform compatibility: plan/apply support, provider endpoint configuration, state management, resource coverage for Terraform workflows in CI"
+    - "Compliance and trust: SOC2/GDPR/HIPAA considerations, corporate backing, maintainer identity, contributor vetting, code review practices"
+
+  scoring:
+    min_dimensions_per_iteration: 1
+    target_dimensions_total: 8
+    evidence_types:
+      - comparison_table
+      - trade_off_analysis
+      - code_example
+
+  execution:
+    max_iterations: 10
+    compress_every: 4
+    allowed_tools: "WebSearch,WebFetch,Read,Bash,Glob,Grep"
+    max_turns: 8
+    backend: claude
+    model: sonnet
+    max_budget_per_call: 2.00
+    timeout_seconds: 600
+
+    strategy: adversarial
+    backends:
+      primary: claude
+      research:
+        - codex
+        - claude
+      judge: codex
+      utility: codex
+    strategy_config:
+      critique_depth: thorough

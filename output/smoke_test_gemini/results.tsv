@@ -1,0 +1,2 @@
+iteration	timestamp	dimension	coverage_score	quality_score	total_score	status	hypothesis	cumulative_cost_usd
+001	2026-04-07T14:30:11	Binary distribution and startup time	0.0	0.0	0.0	crash		0.000

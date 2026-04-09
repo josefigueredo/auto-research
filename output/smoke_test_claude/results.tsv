@@ -1,0 +1,2 @@
+iteration	timestamp	dimension	coverage_score	quality_score	total_score	status	hypothesis	cumulative_cost_usd
+001	2026-04-07T19:20:00	Developer experience	85.0	80.0	82.0	keep	Developer experience is the foundational dimension that encompasses readability, learnability, and productivity — the co	0.261

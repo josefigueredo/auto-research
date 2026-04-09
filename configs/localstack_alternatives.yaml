@@ -1,0 +1,65 @@
+# LocalStack alternatives research.
+# LocalStack is moving to full subscription/paid for commercial use.
+# Compare open-source / free alternatives for local AWS emulation.
+#
+# Known alternatives to investigate:
+#   - nahuelnucera/ministack (Docker image)
+#   - hectorvent/floci (Docker image)
+#   - Any others discovered during research
+#
+# Strategy: adversarial (codex researches, claude critiques, codex judges)
+# Rationale: high hallucination risk on obscure tools — critique catches
+#            fabricated features, compatibility claims, and pricing.
+
+research:
+  topic: >
+    Compare alternatives to LocalStack for local AWS service emulation,
+    given that LocalStack is moving to a fully paid/subscription model
+    for commercial use. Evaluate nahuelnucera/ministack, hectorvent/floci,
+    and any other viable open-source alternatives. Focus on practical
+    usability for development and CI/CD pipelines.
+  goal: >
+    A decision-ready comparison report for a team currently using LocalStack
+    that needs to evaluate whether to pay for LocalStack Pro or migrate to
+    an open-source alternative. Include migration effort estimates, service
+    coverage gaps, and a clear recommendation.
+
+  dimensions:
+    - "AWS service coverage (S3, SQS, SNS, Lambda, DynamoDB, API Gateway, IAM, CloudFormation)"
+    - "Licensing and pricing (LocalStack free vs Pro vs alternatives)"
+    - "Docker image size, startup time, and resource usage"
+    - "CI/CD integration (GitHub Actions, GitLab CI, Jenkins)"
+    - "API compatibility and fidelity vs real AWS"
+    - "Community activity, maintenance status, and bus factor"
+    - "Migration effort from LocalStack (config, SDK compatibility, breaking changes)"
+    - "Terraform / CDK / SAM / CloudFormation support"
+
+  scoring:
+    min_dimensions_per_iteration: 1
+    target_dimensions_total: 8
+    evidence_types:
+      - comparison_table
+      - pricing_data
+      - code_example
+      - trade_off_analysis
+
+  execution:
+    max_iterations: 10
+    compress_every: 4
+    allowed_tools: "WebSearch,WebFetch,Read,Bash,Glob,Grep"
+    max_turns: 8
+    backend: claude
+    model: sonnet
+    max_budget_per_call: 2.00
+    timeout_seconds: 600
+
+    strategy: adversarial
+    backends:
+      primary: claude           # hypothesis + synthesis (best reasoner)
+      research:
+        - codex                 # researcher (different provider)
+        - claude                # adversary (critiques codex's findings)
+      judge: codex              # adjudicator (different from critic)
+      utility: codex
+    strategy_config:
+      critique_depth: thorough  # line-by-line — obscure tools need strict fact-checking
