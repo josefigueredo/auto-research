@@ -17,11 +17,13 @@ The project now includes:
 - per-backend cost/token accounting
 - reproducibility artifacts (`run_manifest.json`, `metrics.json`, `methods.md`)
 - lightweight academic/provenance artifacts (`claims.json`, `citations.json`,
-  `evidence_links.json`, `contradictions.json`)
+  `evidence_links.json`, `evidence_quality.json`, `contradictions.json`)
+- source-quality weighting and evidence-quality scoring
+- optional baseline generation and iterative-vs-baseline comparison artifacts
 
 Test status at the time of this update:
 
-- **216 passing tests**
+- **220 passing tests**
 
 ## The Pattern
 
@@ -263,10 +265,24 @@ The framework now emits first-pass provenance artifacts:
 - `claims.json` — extracted claims with claim type, confidence label, dimension, and cited URLs
 - `citations.json` — extracted URL references with inferred source type and retrieval timestamp
 - `evidence_links.json` — heuristic links from claims to citations with support-strength labels
+- `evidence_quality.json` — run-level summary of direct citation coverage and evidence-quality scores
 - `contradictions.json` — detected recommendation conflicts for human review
 
 These artifacts are intentionally lightweight. They are a bridge toward more
 academic workflows, not a full scholarly citation engine yet.
+
+## Evaluation and Baselines
+
+The framework now supports an optional `evaluation:` config section:
+
+- `benchmark_id` — identifies the task in an internal benchmark set
+- `run_baselines` — generates a single-pass baseline answer for comparison
+
+When enabled, the run emits:
+
+- `baseline.md` — single-pass baseline answer from the synthesis backend
+- `evaluation.json` — comparison of iterative synthesis vs baseline, including
+  claim/citation counts and evidence-quality summary
 
 ## Requirements
 
@@ -304,6 +320,7 @@ autoresearch/
         _template.yaml              Copy this for new research topics
         smoke_test_*.yaml           Per-backend and per-strategy smoke tests
     prompts/
+        baseline.md         Single-pass baseline answer for evaluation mode
         hypothesis.md       Picks next dimension to explore (returns JSON)
         research.md         Deep research with web search tools
         evaluate.md         LLM judge: depth, accuracy, novelty, actionability
@@ -330,7 +347,10 @@ autoresearch/
             claims.json        Extracted claims with type/confidence metadata
             citations.json     Extracted URLs with inferred source types
             evidence_links.json Heuristic claim-to-citation links with support labels
+            evidence_quality.json Run-level evidence quality summary
             contradictions.json Potentially conflicting recommendations for review
+            baseline.md       Single-pass baseline answer (optional)
+            evaluation.json   Iterative-vs-baseline comparison summary (optional)
 ```
 
 ## Creating a New Research Topic

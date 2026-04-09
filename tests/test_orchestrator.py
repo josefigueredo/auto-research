@@ -282,11 +282,40 @@ class TestAutoResearcherSetup:
         claims = json.loads(researcher.claims_path.read_text(encoding="utf-8"))
         citations = json.loads(researcher.citations_path.read_text(encoding="utf-8"))
         links = json.loads(researcher.evidence_links_path.read_text(encoding="utf-8"))
+        evidence_quality = json.loads(researcher.evidence_quality_path.read_text(encoding="utf-8"))
         contradictions = json.loads(researcher.contradictions_path.read_text(encoding="utf-8"))
         assert any(claim["claim_type"] == "recommendation" for claim in claims)
         assert any(citation["url"].startswith("https://docs.python.org") for citation in citations)
         assert len(links) == len(claims)
+        assert "average_evidence_quality_score" in evidence_quality
         assert contradictions == []
+
+    def test_generate_baseline_and_evaluation_artifacts(self, researcher):
+        researcher.config = ResearchConfig(
+            topic=researcher.config.topic,
+            goal=researcher.config.goal,
+            dimensions=researcher.config.dimensions,
+            methodology=researcher.config.methodology,
+            evaluation=type(researcher.config.evaluation)(benchmark_id="bench-001", run_baselines=True),
+            scoring=researcher.config.scoring,
+            execution=researcher.config.execution,
+        )
+        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher._setup()
+        researcher.knowledge_base = "Iterative knowledge"
+        with patch.object(researcher, "_call_with", return_value=AgentResponse(
+            text="Recommend Python for orchestration-heavy workloads. High confidence. https://docs.python.org/3/",
+            cost_usd=0.0,
+            is_error=False,
+        )):
+            researcher._generate_synthesis()
+            researcher._generate_baseline()
+            researcher._finalize_run_artifacts()
+        evaluation = json.loads(researcher.evaluation_path.read_text(encoding="utf-8"))
+        assert evaluation["benchmark_id"] == "bench-001"
+        assert evaluation["baseline_generated"] is True
 
 
 # ---------------------------------------------------------------------------

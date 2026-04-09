@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import BackendsConfig, ExecutionConfig, MethodologyConfig, ResearchConfig, ScoringConfig, StrategyConfig
+from src.config import BackendsConfig, EvaluationConfig, ExecutionConfig, MethodologyConfig, ResearchConfig, ScoringConfig, StrategyConfig
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +90,13 @@ class TestMethodologyConfig:
         assert mc.recency_days == 0
 
 
+class TestEvaluationConfig:
+    def test_defaults(self):
+        ec = EvaluationConfig()
+        assert ec.benchmark_id == ""
+        assert ec.run_baselines is False
+
+
 # ---------------------------------------------------------------------------
 # ExecutionConfig defaults
 # ---------------------------------------------------------------------------
@@ -156,6 +163,19 @@ class TestResearchConfigFromYaml:
         assert cfg.methodology.exclusion_criteria == ("anonymous forum posts",)
         assert cfg.methodology.preferred_source_types == ("vendor docs", "standards")
         assert cfg.methodology.recency_days == 180
+
+    def test_evaluation_config(self, tmp_path: Path):
+        p = tmp_path / "evaluation.yaml"
+        p.write_text(textwrap.dedent("""\
+            research:
+              topic: "Test"
+              evaluation:
+                benchmark_id: "bench-001"
+                run_baselines: true
+        """), encoding="utf-8")
+        cfg = ResearchConfig.from_yaml(p)
+        assert cfg.evaluation.benchmark_id == "bench-001"
+        assert cfg.evaluation.run_baselines is True
 
     def test_minimal_config_uses_defaults(self, minimal_yaml: Path):
         cfg = ResearchConfig.from_yaml(minimal_yaml)

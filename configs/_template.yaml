@@ -21,6 +21,10 @@ research:
     # Tip: combine this with prompts that require source URLs and confidence
     # labels so the run can produce stronger claims.json / citations.json output.
 
+  evaluation:
+    benchmark_id: ""          # Optional benchmark/task identifier
+    run_baselines: false      # Generate a single-pass baseline.md + evaluation.json
+
   scoring:
     min_dimensions_per_iteration: 1
     target_dimensions_total: 10   # stop after this many dimensions have been explored

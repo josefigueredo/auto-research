@@ -132,6 +132,19 @@ class ScoringConfig:
 
 
 @dataclass(frozen=True)
+class EvaluationConfig:
+    """Optional evaluation settings for benchmark/baseline comparisons.
+
+    Attributes:
+        benchmark_id: Optional benchmark/task identifier for the run.
+        run_baselines: Whether to generate a single-pass baseline answer and compare it.
+    """
+
+    benchmark_id: str = ""
+    run_baselines: bool = False
+
+
+@dataclass(frozen=True)
 class ExecutionConfig:
     """Runtime parameters for the research loop.
 
@@ -178,6 +191,7 @@ class ResearchConfig:
     goal: str
     dimensions: tuple[str, ...]
     methodology: MethodologyConfig = field(default_factory=MethodologyConfig)
+    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
 
@@ -226,6 +240,13 @@ class ResearchConfig:
             exclusion_criteria=tuple(methodology_raw.get("exclusion_criteria", [])),
             preferred_source_types=tuple(methodology_raw.get("preferred_source_types", [])),
             recency_days=methodology_raw.get("recency_days", 0),
+        )
+
+        # --- Evaluation -------------------------------------------------------
+        evaluation_raw: dict[str, Any] = research.get("evaluation", {})
+        evaluation = EvaluationConfig(
+            benchmark_id=evaluation_raw.get("benchmark_id", ""),
+            run_baselines=evaluation_raw.get("run_baselines", False),
         )
 
         # --- Scoring ----------------------------------------------------------
@@ -336,6 +357,7 @@ class ResearchConfig:
             goal=research.get("goal", research["topic"]),
             dimensions=tuple(research.get("dimensions", [])),
             methodology=methodology,
+            evaluation=evaluation,
             scoring=scoring,
             execution=execution,
         )

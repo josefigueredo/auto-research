@@ -21,7 +21,13 @@ from typing import Any
 
 from .backends import CLAUDE_SHORTNAMES, AgentResponse, Backend, CallOptions, get_backends
 from .config import ResearchConfig
-from .provenance import detect_claim_conflicts, extract_citations, extract_claims, link_claims_to_citations
+from .provenance import (
+    detect_claim_conflicts,
+    extract_citations,
+    extract_claims,
+    link_claims_to_citations,
+    summarize_evidence_quality,
+)
 from .prompts import render as _render
 from .scorer import (
     IterationScore,
@@ -88,7 +94,10 @@ class AutoResearcher:
         self.claims_path = output_dir / "claims.json"
         self.citations_path = output_dir / "citations.json"
         self.evidence_links_path = output_dir / "evidence_links.json"
+        self.evidence_quality_path = output_dir / "evidence_quality.json"
         self.contradictions_path = output_dir / "contradictions.json"
+        self.baseline_path = output_dir / "baseline.md"
+        self.evaluation_path = output_dir / "evaluation.json"
 
         # Multi-backend support
         if backends is None:
@@ -251,6 +260,7 @@ class AutoResearcher:
             if self._run_status == "running":
                 self._run_status = "completed"
             self._generate_synthesis()
+            self._generate_baseline()
             self._finalize_run_artifacts()
             self._print_summary()
 
@@ -260,6 +270,7 @@ class AutoResearcher:
         self._resume()
         self._run_status = "synthesis_only"
         self._generate_synthesis()
+        self._generate_baseline()
         self._finalize_run_artifacts()
 
     def _should_stop(self) -> bool:
@@ -920,6 +931,10 @@ class AutoResearcher:
                 "name": self.config.execution.strategy,
                 "description": self.strategy.describe(),
             },
+            "evaluation": {
+                "benchmark_id": self.config.evaluation.benchmark_id,
+                "run_baselines": self.config.evaluation.run_baselines,
+            },
             "environment": {
                 "python_version": platform.python_version(),
                 "platform": platform.platform(),
@@ -939,6 +954,7 @@ class AutoResearcher:
         """Write machine-readable run metrics."""
         payload = {
             "run_status": self._run_status,
+            "benchmark_id": self.config.evaluation.benchmark_id,
             "iterations": self.iteration,
             "best_score": self.best_score,
             "explored_dimensions_count": len(self.explored_dimensions),
@@ -968,9 +984,57 @@ class AutoResearcher:
         self.claims_path.write_text(json.dumps(self._claims, indent=2), encoding="utf-8")
         self.citations_path.write_text(json.dumps(self._citations, indent=2), encoding="utf-8")
         evidence_links = link_claims_to_citations(self._claims, self._citations)
+        evidence_quality = summarize_evidence_quality(self._claims, evidence_links)
         contradictions = detect_claim_conflicts(self._claims)
         self.evidence_links_path.write_text(json.dumps(evidence_links, indent=2), encoding="utf-8")
+        self.evidence_quality_path.write_text(json.dumps(evidence_quality, indent=2), encoding="utf-8")
         self.contradictions_path.write_text(json.dumps(contradictions, indent=2), encoding="utf-8")
+        self._write_evaluation_artifact(evidence_quality)
+
+    def _generate_baseline(self) -> None:
+        """Generate an optional single-pass baseline answer for comparison."""
+        if not self.config.evaluation.run_baselines:
+            return
+        prompt = _render(
+            "baseline.md",
+            topic=self.config.topic,
+            methodology=self._methodology_summary(),
+        )
+        baseline_backend = self.strategy.get_synthesize_backend()
+        resp = self._call_with(baseline_backend, prompt, max_turns=3)
+        self._track_usage(resp, baseline_backend.name)
+        if not resp.is_error and resp.text:
+            self.baseline_path.write_text(resp.text, encoding="utf-8")
+            self._collect_provenance(resp.text, scope="baseline")
+
+    def _write_evaluation_artifact(self, evidence_quality: dict[str, Any]) -> None:
+        """Write optional evaluation summary comparing iterative output to a baseline."""
+        if not self.config.evaluation.run_baselines:
+            return
+
+        baseline_claims = [claim for claim in self._claims if claim.get("scope") == "baseline"]
+        synthesis_claims = [claim for claim in self._claims if claim.get("scope") == "synthesis"]
+        baseline_citations = [citation for citation in self._citations if citation.get("scope") == "baseline"]
+        synthesis_citations = [citation for citation in self._citations if citation.get("scope") == "synthesis"]
+
+        payload = {
+            "benchmark_id": self.config.evaluation.benchmark_id,
+            "baseline_generated": self.baseline_path.exists(),
+            "iterative_synthesis": {
+                "claims_count": len(synthesis_claims),
+                "citations_count": len(synthesis_citations),
+            },
+            "baseline": {
+                "claims_count": len(baseline_claims),
+                "citations_count": len(baseline_citations),
+            },
+            "evidence_quality": evidence_quality,
+            "summary": {
+                "iterative_has_more_claims_than_baseline": len(synthesis_claims) > len(baseline_claims),
+                "iterative_has_more_citations_than_baseline": len(synthesis_citations) > len(baseline_citations),
+            },
+        }
+        self.evaluation_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     @staticmethod
     def _git_commit() -> str | None:

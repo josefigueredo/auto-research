@@ -39,6 +39,7 @@ def extract_citations(text: str, *, scope: str, retrieved_at: str) -> list[dict[
                 "title": title.strip(),
                 "url": url,
                 "source_type": infer_source_type(url),
+                "source_quality_weight": source_quality_weight(infer_source_type(url)),
                 "retrieved_at": retrieved_at,
             }
         )
@@ -54,6 +55,7 @@ def extract_citations(text: str, *, scope: str, retrieved_at: str) -> list[dict[
                 "title": "",
                 "url": url,
                 "source_type": infer_source_type(url),
+                "source_quality_weight": source_quality_weight(infer_source_type(url)),
                 "retrieved_at": retrieved_at,
             }
         )
@@ -103,16 +105,24 @@ def link_claims_to_citations(
     for claim in claims:
         matched_ids: list[str] = []
         matched_types: list[str] = []
+        matched_weights: list[float] = []
         for url in claim.get("cited_urls", []):
             citation = citation_by_url.get(url)
             if citation:
                 matched_ids.append(citation["id"])
                 matched_types.append(citation["source_type"])
+                matched_weights.append(float(citation.get("source_quality_weight", 0.4)))
 
         support_strength = infer_support_strength(
             claim,
             matched_citation_count=len(matched_ids),
             matched_source_types=matched_types,
+        )
+        evidence_quality_score = score_evidence_quality(
+            claim,
+            matched_citation_count=len(matched_ids),
+            matched_source_types=matched_types,
+            matched_weights=matched_weights,
         )
         links.append(
             {
@@ -120,6 +130,7 @@ def link_claims_to_citations(
                 "citation_ids": matched_ids,
                 "support_strength": support_strength,
                 "has_direct_citation": bool(matched_ids),
+                "evidence_quality_score": evidence_quality_score,
             }
         )
     return links
@@ -169,6 +180,17 @@ def infer_source_type(url: str) -> str:
     return "web"
 
 
+def source_quality_weight(source_type: str) -> float:
+    """Return a coarse evidence-quality weight for a source type."""
+    return {
+        "official_docs": 1.0,
+        "paper": 0.95,
+        "repository": 0.75,
+        "web": 0.6,
+        "community": 0.35,
+    }.get(source_type, 0.5)
+
+
 def infer_claim_type(claim: str) -> str:
     """Infer a coarse claim class."""
     lowered = claim.lower()
@@ -200,6 +222,67 @@ def infer_support_strength(
     if matched_citation_count >= 1:
         return "moderate" if confidence in {"high", "medium"} else "basic"
     return "weak" if confidence != "high" else "moderate"
+
+
+def score_evidence_quality(
+    claim: dict[str, Any],
+    *,
+    matched_citation_count: int,
+    matched_source_types: list[str],
+    matched_weights: list[float],
+) -> float:
+    """Score claim evidence quality from 0.0 to 1.0."""
+    confidence_bonus = {
+        "high": 0.15,
+        "medium": 0.1,
+        "low": 0.03,
+        "unresolved": -0.05,
+        "unlabeled": 0.0,
+    }.get(claim.get("confidence", "unlabeled"), 0.0)
+
+    if not matched_citation_count:
+        return round(max(0.0, 0.15 + confidence_bonus), 2)
+
+    avg_weight = sum(matched_weights) / len(matched_weights) if matched_weights else 0.5
+    diversity_bonus = 0.1 if len(set(matched_source_types)) >= 2 else 0.0
+    corroboration_bonus = min(0.2, 0.08 * matched_citation_count)
+    score = avg_weight * 0.55 + diversity_bonus + corroboration_bonus + confidence_bonus
+    return round(min(1.0, max(0.0, score)), 2)
+
+
+def summarize_evidence_quality(
+    claims: list[dict[str, Any]],
+    evidence_links: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Summarize evidence quality over the run."""
+    if not claims:
+        return {
+            "average_evidence_quality_score": 0.0,
+            "claims_with_direct_citations": 0,
+            "claims_without_direct_citations": 0,
+            "support_strength_counts": {},
+            "weak_claim_ids": [],
+        }
+
+    scores = [float(link.get("evidence_quality_score", 0.0)) for link in evidence_links]
+    support_counts: dict[str, int] = {}
+    weak_claim_ids: list[str] = []
+    direct = 0
+    for link in evidence_links:
+        strength = link.get("support_strength", "unknown")
+        support_counts[strength] = support_counts.get(strength, 0) + 1
+        if link.get("has_direct_citation"):
+            direct += 1
+        if strength == "weak":
+            weak_claim_ids.append(link["claim_id"])
+
+    return {
+        "average_evidence_quality_score": round(sum(scores) / len(scores), 2) if scores else 0.0,
+        "claims_with_direct_citations": direct,
+        "claims_without_direct_citations": len(claims) - direct,
+        "support_strength_counts": support_counts,
+        "weak_claim_ids": weak_claim_ids,
+    }
 
 
 def _iter_claim_candidates(text: str) -> list[str]:

@@ -8,6 +8,8 @@ from src.provenance import (
     infer_confidence,
     infer_source_type,
     link_claims_to_citations,
+    source_quality_weight,
+    summarize_evidence_quality,
 )
 
 
@@ -40,6 +42,7 @@ def test_extract_claims():
 def test_infer_source_type():
     assert infer_source_type("https://docs.aws.amazon.com/lambda/latest/dg/welcome.html") == "official_docs"
     assert infer_source_type("https://arxiv.org/abs/1234.5678") == "paper"
+    assert source_quality_weight("official_docs") > source_quality_weight("community")
 
 
 def test_infer_claim_type_and_confidence():
@@ -54,6 +57,7 @@ def test_link_claims_to_citations():
     links = link_claims_to_citations(claims, citations)
     assert len(links) == len(claims)
     assert any(link["support_strength"] in {"moderate", "strong", "basic"} for link in links)
+    assert all("evidence_quality_score" in link for link in links)
 
 
 def test_detect_claim_conflicts():
@@ -72,3 +76,12 @@ def test_detect_claim_conflicts():
     conflicts = detect_claim_conflicts(claims)
     assert len(conflicts) == 1
     assert conflicts[0]["left_claim_id"] == "claim-001"
+
+
+def test_summarize_evidence_quality():
+    claims = extract_claims(SAMPLE_TEXT, scope="test", dimension="Performance")
+    citations = extract_citations(SAMPLE_TEXT, scope="test", retrieved_at="2026-04-09T00:00:00Z")
+    links = link_claims_to_citations(claims, citations)
+    summary = summarize_evidence_quality(claims, links)
+    assert "average_evidence_quality_score" in summary
+    assert summary["claims_with_direct_citations"] >= 1
