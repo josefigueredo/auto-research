@@ -23,7 +23,7 @@ The project now includes:
 
 Test status at the time of this update:
 
-- **220 passing tests**
+- **221 passing tests**
 
 ## The Pattern
 
@@ -275,14 +275,27 @@ academic workflows, not a full scholarly citation engine yet.
 
 The framework now supports an optional `evaluation:` config section:
 
-- `benchmark_id` — identifies the task in an internal benchmark set
+- `benchmark_id` — identifies the task in a local benchmark definition under `benchmarks/<id>.yaml`
 - `run_baselines` — generates a single-pass baseline answer for comparison
+- `expected_dimensions` — benchmark dimensions you expect the run to cover (overrides bundled benchmark values when set)
+- `required_keywords` — keywords you expect to appear in the final research output (overrides bundled benchmark values when set)
 
 When enabled, the run emits:
 
 - `baseline.md` — single-pass baseline answer from the synthesis backend
 - `evaluation.json` — comparison of iterative synthesis vs baseline, including
-  claim/citation counts and evidence-quality summary
+  claim/citation counts, evidence-quality summary, bundled benchmark metadata, and benchmark expectation coverage
+
+The repository now also supports a lightweight benchmark catalog in `benchmarks/`.
+Each benchmark YAML can define:
+
+- `benchmark_id`
+- `title`
+- `description`
+- `expected_dimensions`
+- `required_keywords`
+
+This lets you keep reusable task expectations in version control instead of duplicating them in each config.
 
 ## Requirements
 
@@ -757,7 +770,7 @@ uv sync --group dev
 uv run pytest tests/ -v
 ```
 
-189 tests covering all modules (backends, config, scorer, orchestrator, cli, strategy).
+221 tests covering all modules (backends, config, scorer, orchestrator, cli, strategy, provenance).
 Each backend has independent tests: `uv run pytest tests/test_backends/test_claude.py`
 
 ## Related Projects

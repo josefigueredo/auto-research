@@ -138,10 +138,14 @@ class EvaluationConfig:
     Attributes:
         benchmark_id: Optional benchmark/task identifier for the run.
         run_baselines: Whether to generate a single-pass baseline answer and compare it.
+        expected_dimensions: Optional benchmark expectations for covered dimensions.
+        required_keywords: Optional benchmark keywords expected in the synthesis.
     """
 
     benchmark_id: str = ""
     run_baselines: bool = False
+    expected_dimensions: tuple[str, ...] = ()
+    required_keywords: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -247,6 +251,8 @@ class ResearchConfig:
         evaluation = EvaluationConfig(
             benchmark_id=evaluation_raw.get("benchmark_id", ""),
             run_baselines=evaluation_raw.get("run_baselines", False),
+            expected_dimensions=tuple(evaluation_raw.get("expected_dimensions", [])),
+            required_keywords=tuple(evaluation_raw.get("required_keywords", [])),
         )
 
         # --- Scoring ----------------------------------------------------------

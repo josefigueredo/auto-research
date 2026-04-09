@@ -22,8 +22,10 @@ research:
     # labels so the run can produce stronger claims.json / citations.json output.
 
   evaluation:
-    benchmark_id: ""          # Optional benchmark/task identifier
+    benchmark_id: ""          # Optional benchmark/task identifier (autoloads benchmarks/<id>.yaml if present)
     run_baselines: false      # Generate a single-pass baseline.md + evaluation.json
+    expected_dimensions: []   # Optional benchmark coverage expectations; overrides bundled benchmark dimensions
+    required_keywords: []     # Optional keywords expected in the final output; overrides bundled benchmark keywords
 
   scoring:
     min_dimensions_per_iteration: 1

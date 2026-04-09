@@ -296,7 +296,10 @@ class TestAutoResearcherSetup:
             goal=researcher.config.goal,
             dimensions=researcher.config.dimensions,
             methodology=researcher.config.methodology,
-            evaluation=type(researcher.config.evaluation)(benchmark_id="bench-001", run_baselines=True),
+            evaluation=type(researcher.config.evaluation)(
+                benchmark_id="bench-001",
+                run_baselines=True,
+            ),
             scoring=researcher.config.scoring,
             execution=researcher.config.execution,
         )
@@ -304,7 +307,7 @@ class TestAutoResearcherSetup:
              patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
              patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
             researcher._setup()
-        researcher.knowledge_base = "Iterative knowledge"
+        researcher.knowledge_base = "Developer experience Iterative knowledge"
         with patch.object(researcher, "_call_with", return_value=AgentResponse(
             text="Recommend Python for orchestration-heavy workloads. High confidence. https://docs.python.org/3/",
             cost_usd=0.0,
@@ -316,6 +319,41 @@ class TestAutoResearcherSetup:
         evaluation = json.loads(researcher.evaluation_path.read_text(encoding="utf-8"))
         assert evaluation["benchmark_id"] == "bench-001"
         assert evaluation["baseline_generated"] is True
+        assert evaluation["benchmark"]["benchmark_title"] == "Python orchestration smoke benchmark"
+        assert evaluation["benchmark"]["all_expectations_satisfied"] is True
+
+    def test_generate_benchmark_evaluation_without_baseline(self, researcher):
+        researcher.config = ResearchConfig(
+            topic=researcher.config.topic,
+            goal=researcher.config.goal,
+            dimensions=researcher.config.dimensions,
+            methodology=researcher.config.methodology,
+            evaluation=type(researcher.config.evaluation)(
+                benchmark_id="bench-002",
+                run_baselines=False,
+            ),
+            scoring=researcher.config.scoring,
+            execution=researcher.config.execution,
+        )
+        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher._setup()
+        researcher.knowledge_base = "Developer experience findings"
+        researcher.synthesis_path.write_text(
+            "Python remains suitable for orchestration-heavy workloads. https://docs.python.org/3/",
+            encoding="utf-8",
+        )
+
+        researcher._finalize_run_artifacts()
+
+        evaluation = json.loads(researcher.evaluation_path.read_text(encoding="utf-8"))
+        assert evaluation["benchmark_id"] == "bench-002"
+        assert evaluation["baseline_generated"] is False
+        assert evaluation["benchmark"]["benchmark_title"] == "Python orchestration coverage benchmark"
+        assert evaluation["benchmark"]["covered_dimensions"] == ["Developer experience"]
+        assert evaluation["benchmark"]["matched_keywords"] == ["python", "workloads"]
+        assert evaluation["summary"]["benchmark_expectations_satisfied"] is True
 
 
 # ---------------------------------------------------------------------------

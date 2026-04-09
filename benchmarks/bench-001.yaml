@@ -1,0 +1,9 @@
+benchmark_id: bench-001
+title: Python orchestration smoke benchmark
+description: >
+  Minimal benchmark for validating that synthesis covers developer experience
+  and Python-centric orchestration guidance.
+expected_dimensions:
+  - Developer experience
+required_keywords:
+  - python

@@ -1,0 +1,10 @@
+benchmark_id: bench-002
+title: Python orchestration coverage benchmark
+description: >
+  Checks that synthesis mentions developer experience and workload suitability
+  for Python orchestration recommendations.
+expected_dimensions:
+  - Developer experience
+required_keywords:
+  - python
+  - workloads

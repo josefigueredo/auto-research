@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from .backends import CLAUDE_SHORTNAMES, AgentResponse, Backend, CallOptions, get_backends
 from .config import ResearchConfig
 from .provenance import (
@@ -1009,13 +1011,14 @@ class AutoResearcher:
 
     def _write_evaluation_artifact(self, evidence_quality: dict[str, Any]) -> None:
         """Write optional evaluation summary comparing iterative output to a baseline."""
-        if not self.config.evaluation.run_baselines:
+        if not self.config.evaluation.run_baselines and not self.config.evaluation.benchmark_id:
             return
 
         baseline_claims = [claim for claim in self._claims if claim.get("scope") == "baseline"]
         synthesis_claims = [claim for claim in self._claims if claim.get("scope") == "synthesis"]
         baseline_citations = [citation for citation in self._citations if citation.get("scope") == "baseline"]
         synthesis_citations = [citation for citation in self._citations if citation.get("scope") == "synthesis"]
+        benchmark_summary = self._benchmark_summary()
 
         payload = {
             "benchmark_id": self.config.evaluation.benchmark_id,
@@ -1029,12 +1032,79 @@ class AutoResearcher:
                 "citations_count": len(baseline_citations),
             },
             "evidence_quality": evidence_quality,
+            "benchmark": benchmark_summary,
             "summary": {
                 "iterative_has_more_claims_than_baseline": len(synthesis_claims) > len(baseline_claims),
                 "iterative_has_more_citations_than_baseline": len(synthesis_citations) > len(baseline_citations),
+                "benchmark_expectations_satisfied": benchmark_summary.get("all_expectations_satisfied", True),
             },
         }
         self.evaluation_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def _load_benchmark_definition(self) -> dict[str, Any]:
+        """Load a bundled benchmark definition when ``benchmark_id`` maps to a YAML file."""
+        benchmark_id = self.config.evaluation.benchmark_id.strip()
+        if not benchmark_id:
+            return {}
+
+        benchmark_path = Path("benchmarks") / f"{benchmark_id}.yaml"
+        if not benchmark_path.exists():
+            return {}
+
+        with benchmark_path.open("r", encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh) or {}
+
+        return {
+            "benchmark_id": raw.get("benchmark_id", benchmark_id),
+            "title": raw.get("title", ""),
+            "description": raw.get("description", ""),
+            "expected_dimensions": list(raw.get("expected_dimensions", [])),
+            "required_keywords": list(raw.get("required_keywords", [])),
+        }
+
+    def _benchmark_summary(self) -> dict[str, Any]:
+        """Evaluate current run outputs against optional benchmark expectations."""
+        benchmark_definition = self._load_benchmark_definition()
+        expected_dimensions = (
+            list(self.config.evaluation.expected_dimensions)
+            or list(benchmark_definition.get("expected_dimensions", []))
+        )
+        required_keywords = (
+            list(self.config.evaluation.required_keywords)
+            or list(benchmark_definition.get("required_keywords", []))
+        )
+        synthesis_text = self.synthesis_path.read_text(encoding="utf-8") if self.synthesis_path.exists() else ""
+        knowledge_text = self.knowledge_base or ""
+        searchable_text = f"{knowledge_text}\n\n{synthesis_text}".lower()
+
+        covered_dimensions = [dim for dim in expected_dimensions if dim.lower() in searchable_text]
+        matched_keywords = [kw for kw in required_keywords if kw.lower() in searchable_text]
+
+        dimension_score = (
+            len(covered_dimensions) / len(expected_dimensions) if expected_dimensions else 1.0
+        )
+        keyword_score = (
+            len(matched_keywords) / len(required_keywords) if required_keywords else 1.0
+        )
+        all_expectations_satisfied = (
+            len(covered_dimensions) == len(expected_dimensions)
+            and len(matched_keywords) == len(required_keywords)
+        )
+
+        return {
+            "benchmark_id": benchmark_definition.get("benchmark_id", self.config.evaluation.benchmark_id),
+            "benchmark_title": benchmark_definition.get("title", ""),
+            "benchmark_description": benchmark_definition.get("description", ""),
+            "expected_dimensions": expected_dimensions,
+            "covered_dimensions": covered_dimensions,
+            "missing_dimensions": [dim for dim in expected_dimensions if dim not in covered_dimensions],
+            "required_keywords": required_keywords,
+            "matched_keywords": matched_keywords,
+            "missing_keywords": [kw for kw in required_keywords if kw not in matched_keywords],
+            "dimension_coverage_score": round(dimension_score, 2),
+            "keyword_coverage_score": round(keyword_score, 2),
+            "all_expectations_satisfied": all_expectations_satisfied,
+        }
 
     @staticmethod
     def _git_commit() -> str | None:
