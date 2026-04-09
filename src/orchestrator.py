@@ -100,6 +100,7 @@ class AutoResearcher:
         self.contradictions_path = output_dir / "contradictions.json"
         self.baseline_path = output_dir / "baseline.md"
         self.evaluation_path = output_dir / "evaluation.json"
+        self.comparison_path = output_dir / "comparison.json"
 
         # Multi-backend support
         if backends is None:
@@ -1011,7 +1012,11 @@ class AutoResearcher:
 
     def _write_evaluation_artifact(self, evidence_quality: dict[str, Any]) -> None:
         """Write optional evaluation summary comparing iterative output to a baseline."""
-        if not self.config.evaluation.run_baselines and not self.config.evaluation.benchmark_id:
+        if (
+            not self.config.evaluation.run_baselines
+            and not self.config.evaluation.benchmark_id
+            and not self.config.evaluation.reference_runs
+        ):
             return
 
         baseline_claims = [claim for claim in self._claims if claim.get("scope") == "baseline"]
@@ -1019,6 +1024,7 @@ class AutoResearcher:
         baseline_citations = [citation for citation in self._citations if citation.get("scope") == "baseline"]
         synthesis_citations = [citation for citation in self._citations if citation.get("scope") == "synthesis"]
         benchmark_summary = self._benchmark_summary()
+        reference_comparison = self._reference_run_comparison()
 
         payload = {
             "benchmark_id": self.config.evaluation.benchmark_id,
@@ -1033,13 +1039,150 @@ class AutoResearcher:
             },
             "evidence_quality": evidence_quality,
             "benchmark": benchmark_summary,
+            "reference_comparison": reference_comparison,
             "summary": {
                 "iterative_has_more_claims_than_baseline": len(synthesis_claims) > len(baseline_claims),
                 "iterative_has_more_citations_than_baseline": len(synthesis_citations) > len(baseline_citations),
                 "benchmark_expectations_satisfied": benchmark_summary.get("all_expectations_satisfied", True),
+                "reference_runs_compared": reference_comparison.get("compared_runs_count", 0),
             },
         }
         self.evaluation_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self.comparison_path.write_text(json.dumps(reference_comparison, indent=2), encoding="utf-8")
+
+    @staticmethod
+    def _normalize_claim_text(text: str) -> str:
+        """Normalize claim text for crude overlap comparisons."""
+        return " ".join(text.lower().split())
+
+    def _reference_run_comparison(self) -> dict[str, Any]:
+        """Compare the current run to referenced prior outputs for consistency analysis."""
+        if not self.config.evaluation.reference_runs:
+            return {
+                "compared_runs_count": 0,
+                "runs": [],
+                "summary": {
+                    "average_dimension_overlap": 0.0,
+                    "average_citation_overlap": 0.0,
+                    "average_claim_overlap": 0.0,
+                    "average_score_delta": 0.0,
+                    "consistency_level": "not_available",
+                },
+            }
+
+        current_dimensions = set(self.explored_dimensions)
+        current_citations = {citation.get("url", "") for citation in self._citations if citation.get("url")}
+        current_claims = {
+            self._normalize_claim_text(claim.get("text", ""))
+            for claim in self._claims
+            if claim.get("scope") == "synthesis" and claim.get("text")
+        }
+
+        runs: list[dict[str, Any]] = []
+        for raw_path in self.config.evaluation.reference_runs:
+            ref_dir = Path(raw_path)
+            metrics_path = ref_dir / "metrics.json"
+            manifest_path = ref_dir / "run_manifest.json"
+            claims_path = ref_dir / "claims.json"
+            citations_path = ref_dir / "citations.json"
+            if not metrics_path.exists():
+                runs.append(
+                    {
+                        "path": str(ref_dir),
+                        "status": "missing_metrics",
+                    }
+                )
+                continue
+
+            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+            manifest = (
+                json.loads(manifest_path.read_text(encoding="utf-8"))
+                if manifest_path.exists()
+                else {}
+            )
+            claims = json.loads(claims_path.read_text(encoding="utf-8")) if claims_path.exists() else []
+            citations = json.loads(citations_path.read_text(encoding="utf-8")) if citations_path.exists() else []
+
+            ref_dimensions = set(metrics.get("explored_dimensions", []))
+            ref_citations = {citation.get("url", "") for citation in citations if citation.get("url")}
+            ref_claims = {
+                self._normalize_claim_text(claim.get("text", ""))
+                for claim in claims
+                if claim.get("scope") == "synthesis" and claim.get("text")
+            }
+
+            dimension_union = current_dimensions | ref_dimensions
+            citation_union = current_citations | ref_citations
+            claim_union = current_claims | ref_claims
+
+            dimension_overlap = (
+                len(current_dimensions & ref_dimensions) / len(dimension_union)
+                if dimension_union
+                else 1.0
+            )
+            citation_overlap = (
+                len(current_citations & ref_citations) / len(citation_union)
+                if citation_union
+                else 1.0
+            )
+            claim_overlap = (
+                len(current_claims & ref_claims) / len(claim_union)
+                if claim_union
+                else 1.0
+            )
+
+            runs.append(
+                {
+                    "path": str(ref_dir),
+                    "status": "ok",
+                    "strategy": manifest.get("strategy", {}).get("name", ""),
+                    "benchmark_id": metrics.get("benchmark_id") or manifest.get("evaluation", {}).get("benchmark_id", ""),
+                    "best_score": metrics.get("best_score", 0.0),
+                    "score_delta": round(self.best_score - float(metrics.get("best_score", 0.0)), 2),
+                    "dimension_overlap": round(dimension_overlap, 2),
+                    "citation_overlap": round(citation_overlap, 2),
+                    "claim_overlap": round(claim_overlap, 2),
+                    "shared_dimensions": sorted(current_dimensions & ref_dimensions),
+                }
+            )
+
+        successful = [run for run in runs if run.get("status") == "ok"]
+        if not successful:
+            return {
+                "compared_runs_count": 0,
+                "runs": runs,
+                "summary": {
+                    "average_dimension_overlap": 0.0,
+                    "average_citation_overlap": 0.0,
+                    "average_claim_overlap": 0.0,
+                    "average_score_delta": 0.0,
+                    "consistency_level": "not_available",
+                },
+            }
+
+        avg_dimension = round(sum(run["dimension_overlap"] for run in successful) / len(successful), 2)
+        avg_citation = round(sum(run["citation_overlap"] for run in successful) / len(successful), 2)
+        avg_claim = round(sum(run["claim_overlap"] for run in successful) / len(successful), 2)
+        avg_score_delta = round(sum(run["score_delta"] for run in successful) / len(successful), 2)
+        consistency_signal = round((avg_dimension + avg_citation + avg_claim) / 3, 2)
+        if consistency_signal >= 0.75:
+            consistency_level = "high"
+        elif consistency_signal >= 0.4:
+            consistency_level = "medium"
+        else:
+            consistency_level = "low"
+
+        return {
+            "compared_runs_count": len(successful),
+            "runs": runs,
+            "summary": {
+                "average_dimension_overlap": avg_dimension,
+                "average_citation_overlap": avg_citation,
+                "average_claim_overlap": avg_claim,
+                "average_score_delta": avg_score_delta,
+                "consistency_level": consistency_level,
+            },
+        }
 
     def _load_benchmark_definition(self) -> dict[str, Any]:
         """Load a bundled benchmark definition when ``benchmark_id`` maps to a YAML file."""

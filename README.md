@@ -23,7 +23,7 @@ The project now includes:
 
 Test status at the time of this update:
 
-- **221 passing tests**
+- **222 passing tests**
 
 ## The Pattern
 
@@ -279,12 +279,14 @@ The framework now supports an optional `evaluation:` config section:
 - `run_baselines` — generates a single-pass baseline answer for comparison
 - `expected_dimensions` — benchmark dimensions you expect the run to cover (overrides bundled benchmark values when set)
 - `required_keywords` — keywords you expect to appear in the final research output (overrides bundled benchmark values when set)
+- `reference_runs` — prior output directories to compare against for repeatability and cross-strategy analysis
 
 When enabled, the run emits:
 
 - `baseline.md` — single-pass baseline answer from the synthesis backend
 - `evaluation.json` — comparison of iterative synthesis vs baseline, including
   claim/citation counts, evidence-quality summary, bundled benchmark metadata, and benchmark expectation coverage
+- `comparison.json` — overlap metrics versus referenced prior runs (dimensions, citations, claims, score deltas, and consistency level)
 
 The repository now also supports a lightweight benchmark catalog in `benchmarks/`.
 Each benchmark YAML can define:
@@ -770,7 +772,7 @@ uv sync --group dev
 uv run pytest tests/ -v
 ```
 
-221 tests covering all modules (backends, config, scorer, orchestrator, cli, strategy, provenance).
+222 tests covering all modules (backends, config, scorer, orchestrator, cli, strategy, provenance).
 Each backend has independent tests: `uv run pytest tests/test_backends/test_claude.py`
 
 ## Related Projects

@@ -97,6 +97,7 @@ class TestEvaluationConfig:
         assert ec.run_baselines is False
         assert ec.expected_dimensions == ()
         assert ec.required_keywords == ()
+        assert ec.reference_runs == ()
 
 
 # ---------------------------------------------------------------------------
@@ -180,12 +181,16 @@ class TestResearchConfigFromYaml:
                 required_keywords:
                   - "pricing"
                   - "latency"
+                reference_runs:
+                  - "output/run-a"
+                  - "output/run-b"
         """), encoding="utf-8")
         cfg = ResearchConfig.from_yaml(p)
         assert cfg.evaluation.benchmark_id == "bench-001"
         assert cfg.evaluation.run_baselines is True
         assert cfg.evaluation.expected_dimensions == ("Cost", "Security")
         assert cfg.evaluation.required_keywords == ("pricing", "latency")
+        assert cfg.evaluation.reference_runs == ("output/run-a", "output/run-b")
 
     def test_minimal_config_uses_defaults(self, minimal_yaml: Path):
         cfg = ResearchConfig.from_yaml(minimal_yaml)

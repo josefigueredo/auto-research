@@ -140,12 +140,14 @@ class EvaluationConfig:
         run_baselines: Whether to generate a single-pass baseline answer and compare it.
         expected_dimensions: Optional benchmark expectations for covered dimensions.
         required_keywords: Optional benchmark keywords expected in the synthesis.
+        reference_runs: Optional prior output directories for consistency / strategy comparison.
     """
 
     benchmark_id: str = ""
     run_baselines: bool = False
     expected_dimensions: tuple[str, ...] = ()
     required_keywords: tuple[str, ...] = ()
+    reference_runs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -253,6 +255,7 @@ class ResearchConfig:
             run_baselines=evaluation_raw.get("run_baselines", False),
             expected_dimensions=tuple(evaluation_raw.get("expected_dimensions", [])),
             required_keywords=tuple(evaluation_raw.get("required_keywords", [])),
+            reference_runs=tuple(evaluation_raw.get("reference_runs", [])),
         )
 
         # --- Scoring ----------------------------------------------------------

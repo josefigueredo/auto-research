@@ -355,6 +355,84 @@ class TestAutoResearcherSetup:
         assert evaluation["benchmark"]["matched_keywords"] == ["python", "workloads"]
         assert evaluation["summary"]["benchmark_expectations_satisfied"] is True
 
+    def test_generate_reference_run_comparison_artifacts(self, researcher, tmp_path):
+        reference_dir = tmp_path / "prior-run"
+        reference_dir.mkdir()
+        (reference_dir / "metrics.json").write_text(
+            json.dumps(
+                {
+                    "benchmark_id": "bench-001",
+                    "best_score": 80.0,
+                    "explored_dimensions": ["Developer experience", "Security"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (reference_dir / "run_manifest.json").write_text(
+            json.dumps({"strategy": {"name": "ensemble"}, "evaluation": {"benchmark_id": "bench-001"}}),
+            encoding="utf-8",
+        )
+        (reference_dir / "claims.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "synthesis-claim-001",
+                        "scope": "synthesis",
+                        "text": "Recommend Python for orchestration-heavy workloads.",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (reference_dir / "citations.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "synthesis-cite-001",
+                        "scope": "synthesis",
+                        "url": "https://docs.python.org/3/",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        researcher.config = ResearchConfig(
+            topic=researcher.config.topic,
+            goal=researcher.config.goal,
+            dimensions=researcher.config.dimensions,
+            methodology=researcher.config.methodology,
+            evaluation=type(researcher.config.evaluation)(
+                reference_runs=(str(reference_dir),),
+            ),
+            scoring=researcher.config.scoring,
+            execution=researcher.config.execution,
+        )
+        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher._setup()
+
+        researcher.explored_dimensions = ["Developer experience", "Performance"]
+        researcher.best_score = 88.0
+        synthesis_text = (
+            "Recommend Python for orchestration-heavy workloads. "
+            "High confidence. https://docs.python.org/3/"
+        )
+        researcher.synthesis_path.write_text(synthesis_text, encoding="utf-8")
+        researcher._collect_provenance(synthesis_text, scope="synthesis")
+
+        researcher._finalize_run_artifacts()
+
+        evaluation = json.loads(researcher.evaluation_path.read_text(encoding="utf-8"))
+        comparison = json.loads(researcher.comparison_path.read_text(encoding="utf-8"))
+        assert evaluation["summary"]["reference_runs_compared"] == 1
+        assert comparison["compared_runs_count"] == 1
+        assert comparison["runs"][0]["strategy"] == "ensemble"
+        assert comparison["runs"][0]["score_delta"] == 8.0
+        assert comparison["runs"][0]["shared_dimensions"] == ["Developer experience"]
+        assert comparison["summary"]["consistency_level"] in {"medium", "high", "low"}
+
 
 # ---------------------------------------------------------------------------
 # AutoResearcher — dimension exhaustion
