@@ -300,6 +300,10 @@ When enabled, the run emits:
 - `dashboard.json` — compact stakeholder summary of benchmark/strategy/rubric status
 - `report.html` — stakeholder-facing HTML summary that renders run metadata, methods, synthesis, rubric results, and evaluation/comparison summaries
 
+The HTML report renderer now uses a filesystem template (`src/templates/report.html.tmpl`)
+instead of embedding the full document directly in Python code, making report
+presentation easier to maintain and customize.
+
 The repository now also supports a lightweight benchmark catalog in `benchmarks/`.
 Each benchmark YAML can define:
 
@@ -331,7 +335,10 @@ autoresearch/
         scorer.py           Heuristic scoring + LLM-as-judge
         strategy.py         Multi-backend strategies (ensemble, adversarial, serial, etc.)
         provenance.py       Claim/citation extraction, evidence links, contradiction checks
-        prompts.py          Template loading and rendering
+        reporting.py        HTML report renderer + template view-model assembly
+        prompts.py          Prompt template loading and rendering
+        templates/
+            report.html.tmpl HTML report template
         backends/
             __init__.py     Re-exports all public symbols
             types.py        PromptMode, CallOptions, AgentResponse, BackendCapabilities
