@@ -69,6 +69,8 @@ Recent internal refactors extracted:
 - benchmark/reference comparison into `src/comparison.py`
 - semantic calibration/review helpers into `src/semantic_eval.py`
 - artifact payload builders into `src/artifacts.py`
+- runtime state helpers into `src/run_state.py`
+- results/iteration persistence helpers into `src/run_io.py`
 
 ## The Pattern
 

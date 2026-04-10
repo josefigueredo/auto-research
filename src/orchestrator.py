@@ -8,7 +8,6 @@ headless mode.
 
 from __future__ import annotations
 
-import csv
 import importlib.metadata
 import json
 import logging
@@ -49,6 +48,8 @@ from .prompts import render as _render
 from .pdf_report import render_simple_pdf
 from .portfolio import build_portfolio, render_portfolio_html
 from .reporting import render_html_report
+from .run_io import append_result_row, build_result_row, setup_output_dir, write_iteration_markdown, write_results_header
+from .run_state import UsageTotals, maybe_exhaust_dimension, merge_findings, resume_state, track_candidate_usage, track_cost, track_usage
 from .scorer import (
     IterationScore,
     _MAX_FINDINGS_CHARS,
@@ -172,6 +173,7 @@ class AutoResearcher:
         self._run_status: str = "initialized"
         self._claims: list[dict[str, Any]] = []
         self._citations: list[dict[str, Any]] = []
+        self._usage = UsageTotals()
 
     def _call(self, prompt: str, **kwargs: Any) -> AgentResponse:
         """Invoke the default backend with config defaults.
@@ -239,36 +241,27 @@ class AutoResearcher:
 
     def _track_cost(self, cost: float, backend_name: str = "") -> None:
         """Add cost to totals (no token data available)."""
-        self.total_cost += cost
-        if backend_name:
-            self.per_backend_costs[backend_name] = (
-                self.per_backend_costs.get(backend_name, 0.0) + cost
-            )
+        track_cost(self._usage, cost, backend_name)
+        self.total_cost = self._usage.total_cost
+        self.per_backend_costs = self._usage.per_backend_costs
 
     def _track_usage(self, resp: AgentResponse, backend_name: str = "") -> None:
         """Add cost and token counts to totals and per-backend tracking."""
-        self._track_cost(resp.cost_usd, backend_name)
-        self.total_input_tokens += resp.input_tokens
-        self.total_output_tokens += resp.output_tokens
-        if backend_name:
-            entry = self.per_backend_tokens.setdefault(
-                backend_name, {"input": 0, "output": 0}
-            )
-            entry["input"] += resp.input_tokens
-            entry["output"] += resp.output_tokens
+        track_usage(self._usage, resp, backend_name)
+        self.total_cost = self._usage.total_cost
+        self.total_input_tokens = self._usage.total_input_tokens
+        self.total_output_tokens = self._usage.total_output_tokens
+        self.per_backend_costs = self._usage.per_backend_costs
+        self.per_backend_tokens = self._usage.per_backend_tokens
 
     def _track_candidate_usage(self, candidate: ResearchCandidate) -> None:
         """Record usage for a strategy-produced research candidate."""
-        self._track_usage(
-            AgentResponse(
-                text=candidate.findings,
-                cost_usd=candidate.cost_usd,
-                is_error=False,
-                input_tokens=candidate.input_tokens,
-                output_tokens=candidate.output_tokens,
-            ),
-            candidate.backend_name,
-        )
+        track_candidate_usage(self._usage, candidate)
+        self.total_cost = self._usage.total_cost
+        self.total_input_tokens = self._usage.total_input_tokens
+        self.total_output_tokens = self._usage.total_output_tokens
+        self.per_backend_costs = self._usage.per_backend_costs
+        self.per_backend_tokens = self._usage.per_backend_tokens
 
     # -- Public API --------------------------------------------------------
 
@@ -332,8 +325,7 @@ class AutoResearcher:
 
     def _setup(self) -> None:
         """Create output directories and initialise results.tsv if needed."""
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.iterations_dir.mkdir(exist_ok=True)
+        setup_output_dir(self.output_dir, self.iterations_dir)
         if self._run_started_at is None:
             self._run_started_at = datetime.now(timezone.utc).isoformat()
 
@@ -344,61 +336,25 @@ class AutoResearcher:
 
     def _resume(self) -> None:
         """Rebuild in-memory state from existing iteration files and TSV."""
-        existing = sorted(self.iterations_dir.glob("iter_*.md"))
-        if not existing:
+        state = resume_state(
+            iterations_dir=self.iterations_dir,
+            results_path=self.results_path,
+            knowledge_base_path=self.kb_path,
+            configured_dimensions=self.config.dimensions,
+            max_attempts_per_dimension=self.MAX_ATTEMPTS_PER_DIMENSION,
+        )
+        if not state["iteration"]:
             return
 
-        log.info("Resuming from %d existing iterations.", len(existing))
-
-        if self.results_path.exists():
-            with open(self.results_path, encoding="utf-8") as f:
-                reader = csv.DictReader(f, delimiter="\t")
-                for row in reader:
-                    self.results.append(dict(row))
-                    dim = row.get("dimension", "")
-                    status = row.get("status", "")
-
-                    if dim:
-                        self._dimension_attempts[dim] = self._dimension_attempts.get(dim, 0) + 1
-
-                    if status == "keep":
-                        try:
-                            score = float(row.get("total_score", 0))
-                        except (ValueError, TypeError):
-                            score = 0.0
-                        
-                        if dim:
-                            if score > self.best_scores.get(dim, 0.0):
-                                self.best_scores[dim] = score
-                            if dim not in self.explored_dimensions:
-                                self.explored_dimensions.append(dim)
-                        
-                        if score > self.best_score:
-                            self.best_score = score
-
-                    gaps_raw = row.get("discovered_gaps", "")
-                    if gaps_raw:
-                        try:
-                            gaps = json.loads(gaps_raw)
-                        except (json.JSONDecodeError, TypeError):
-                            gaps = []
-                        for gap in gaps:
-                            if (
-                                gap
-                                and gap not in self.explored_dimensions
-                                and gap not in self.config.dimensions
-                                and gap not in self.discovered_dimensions
-                            ):
-                                self.discovered_dimensions.append(gap)
-
-                    if dim and self._dimension_attempts.get(dim, 0) >= self.MAX_ATTEMPTS_PER_DIMENSION:
-                        if dim not in self.explored_dimensions:
-                            self.explored_dimensions.append(dim)
-
-        if self.kb_path.exists():
-            self.knowledge_base = self.kb_path.read_text(encoding="utf-8")
-
-        self.iteration = len(existing)
+        log.info("Resuming from %d existing iterations.", state["iteration"])
+        self.results = state["results"]
+        self.best_score = state["best_score"]
+        self.best_scores = state["best_scores"]
+        self.explored_dimensions = state["explored_dimensions"]
+        self.discovered_dimensions = state["discovered_dimensions"]
+        self._dimension_attempts = state["dimension_attempts"]
+        self.knowledge_base = state["knowledge_base"]
+        self.iteration = state["iteration"]
 
     # -- Core loop ---------------------------------------------------------
 
@@ -686,32 +642,37 @@ class AutoResearcher:
         self, dimension: str, findings: str, score: IterationScore
     ) -> None:
         """Merge kept findings into the knowledge base and mark the dimension explored."""
-        if dimension not in self.explored_dimensions:
-            self.explored_dimensions.append(dimension)
-
-        header = f"\n\n## {dimension}\n\n"
-        self.knowledge_base += header + findings
+        merged = merge_findings(
+            dimension=dimension,
+            findings=findings,
+            gaps=score.gaps,
+            knowledge_base=self.knowledge_base,
+            explored_dimensions=self.explored_dimensions,
+            discovered_dimensions=self.discovered_dimensions,
+            configured_dimensions=self.config.dimensions,
+        )
+        self.knowledge_base = merged["knowledge_base"]
+        self.explored_dimensions = merged["explored_dimensions"]
+        self.discovered_dimensions = merged["discovered_dimensions"]
         self.kb_path.write_text(self.knowledge_base, encoding="utf-8")
-
         for gap in score.gaps:
-            if (
-                gap not in self.explored_dimensions
-                and gap not in self.config.dimensions
-                and gap not in self.discovered_dimensions
-            ):
-                self.discovered_dimensions.append(gap)
+            if gap in self.discovered_dimensions:
                 log.info("New dimension discovered: %s", gap)
 
     def _maybe_exhaust_dimension(self, dimension: str) -> None:
         """Mark a dimension as explored if it has reached max attempts."""
-        if self._dimension_attempts.get(dimension, 0) >= self.MAX_ATTEMPTS_PER_DIMENSION:
-            if dimension not in self.explored_dimensions:
-                self.explored_dimensions.append(dimension)
-                log.info(
-                    "Dimension exhausted after %d attempts, moving on: %s",
-                    self.MAX_ATTEMPTS_PER_DIMENSION,
-                    dimension,
-                )
+        exhausted = maybe_exhaust_dimension(
+            dimension=dimension,
+            dimension_attempts=self._dimension_attempts,
+            explored_dimensions=self.explored_dimensions,
+            max_attempts_per_dimension=self.MAX_ATTEMPTS_PER_DIMENSION,
+        )
+        if exhausted:
+            log.info(
+                "Dimension exhausted after %d attempts, moving on: %s",
+                self.MAX_ATTEMPTS_PER_DIMENSION,
+                dimension,
+            )
 
     # -- Phase 5: Log & Save -----------------------------------------------
 
@@ -723,18 +684,14 @@ class AutoResearcher:
         kept: bool,
     ) -> None:
         """Write the iteration's findings to a numbered markdown file."""
-        filename = f"iter_{self.iteration:03d}.md"
-        path = self.iterations_dir / filename
-
-        content = (
-            f"# Iteration {self.iteration:03d} — {dimension}\n\n"
-            f"**Status:** {'keep' if kept else 'discard'}  \n"
-            f"**Scores:** coverage={score.coverage}, quality={score.quality}, "
-            f"total={score.total}  \n"
-            f"**Timestamp:** {datetime.now(timezone.utc).isoformat()}  \n\n"
-            f"---\n\n{findings}\n"
+        write_iteration_markdown(
+            iterations_dir=self.iterations_dir,
+            iteration=self.iteration,
+            dimension=dimension,
+            findings=findings,
+            score=score,
+            kept=kept,
         )
-        path.write_text(content, encoding="utf-8")
         self._collect_provenance(findings, scope=f"iteration-{self.iteration:03d}", dimension=dimension)
 
     def _log_result(
@@ -746,45 +703,22 @@ class AutoResearcher:
         status: str,
     ) -> None:
         """Append a row to results.tsv for this iteration."""
-        row = {
-            "iteration": f"{self.iteration:03d}",
-            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
-            "dimension": dimension,
-            "coverage_score": f"{score.coverage:.1f}",
-            "quality_score": f"{score.quality:.1f}",
-            "total_score": f"{score.total:.1f}",
-            "status": status,
-            "hypothesis": hypothesis[:120],
-            "discovered_gaps": json.dumps(score.gaps),
-            "cumulative_cost_usd": f"{self.total_cost:.3f}",
-            "cumulative_input_tokens": str(self.total_input_tokens),
-            "cumulative_output_tokens": str(self.total_output_tokens),
-        }
+        row = build_result_row(
+            iteration=self.iteration,
+            dimension=dimension,
+            score=score,
+            hypothesis=hypothesis,
+            status=status,
+            total_cost_usd=self.total_cost,
+            total_input_tokens=self.total_input_tokens,
+            total_output_tokens=self.total_output_tokens,
+        )
         self.results.append(row)
-
-        with open(self.results_path, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=list(row.keys()), delimiter="\t", quoting=csv.QUOTE_MINIMAL)
-            writer.writerow(row)
+        append_result_row(self.results_path, row)
 
     def _write_tsv_header(self) -> None:
         """Write the header row to a new results.tsv file."""
-        fields = [
-            "iteration",
-            "timestamp",
-            "dimension",
-            "coverage_score",
-            "quality_score",
-            "total_score",
-            "status",
-            "hypothesis",
-            "discovered_gaps",
-            "cumulative_cost_usd",
-            "cumulative_input_tokens",
-            "cumulative_output_tokens",
-        ]
-        with open(self.results_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fields, delimiter="\t", quoting=csv.QUOTE_MINIMAL)
-            writer.writeheader()
+        write_results_header(self.results_path)
 
     # -- Compression -------------------------------------------------------
 

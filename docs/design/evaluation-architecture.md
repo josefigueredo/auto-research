@@ -224,3 +224,23 @@ The extracted modules now own:
 - pure comparison logic
 - pure semantic-evaluation logic
 - artifact payload contracts
+
+### 2026-04-10 — runtime state and run I/O extraction
+
+A second cleanup pass split remaining mixed responsibilities out of the
+orchestrator:
+
+- `src/run_state.py` — usage tracking, resume-state reconstruction, and
+  explored/discovered-dimension helpers
+- `src/run_io.py` — results header writing, iteration persistence, and
+  results-row construction/appending
+
+After this pass, `src/orchestrator.py` shrank again from **1441** to **1375**
+lines.
+
+The orchestrator is now more narrowly focused on:
+
+- phase sequencing
+- backend invocation
+- iteration control
+- high-level artifact coordination
