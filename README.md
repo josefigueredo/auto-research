@@ -27,7 +27,48 @@ The project now includes:
 
 Test status at the time of this update:
 
-- **241 passing tests**
+- **256 passing tests**
+
+## Core vs Optional Capabilities
+
+### Core framework
+
+These are the features that define autoresearch itself:
+
+- config loading and backend selection
+- hypothesis → research → score → keep/discard loop
+- strategy-driven execution (`single`, `ensemble`, `parallel`, `serial`,
+  `adversarial`, `specialist`)
+- resume support
+- per-backend cost/token accounting
+- synthesis generation
+
+### Optional research-ops layers
+
+These extend the framework into a research operations suite:
+
+- provenance artifacts (`claims.json`, `citations.json`,
+  `evidence_links.json`, `contradictions.json`)
+- evidence-quality and rubric scoring
+- baseline comparison
+- benchmark evaluation
+- reference-run consistency comparison
+- semantic review and semantic calibration
+- HTML/PDF/portfolio reporting
+
+If you only want the core loop, you can ignore the optional evaluation and
+reporting artifacts. They are designed to sit on top of the core runtime rather
+than redefine it.
+
+For the evaluation architecture rationale, see
+`docs/design/evaluation-architecture.md`.
+
+Recent internal refactors extracted:
+
+- goal-shape and lightweight helpers into `src/constraints.py`
+- benchmark/reference comparison into `src/comparison.py`
+- semantic calibration/review helpers into `src/semantic_eval.py`
+- artifact payload builders into `src/artifacts.py`
 
 ## The Pattern
 

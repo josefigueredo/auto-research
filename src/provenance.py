@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .constraints import is_lightweight_goal
 
 _URL_PATTERN = re.compile(r"https?://[^\s)>\]]+")
 _MD_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
@@ -295,7 +296,7 @@ def score_research_rubric(
     lightweight_mode: bool = False,
 ) -> dict[str, Any]:
     """Produce a lightweight research-quality rubric from run artifacts."""
-    lightweight = lightweight_mode or _is_lightweight_goal(goal)
+    lightweight = lightweight_mode or is_lightweight_goal(goal)
     synthesis_claims = [claim for claim in claims if claim.get("scope") == "synthesis"]
     if not synthesis_claims:
         return {
@@ -393,27 +394,6 @@ def score_research_rubric(
             "lightweight_mode": lightweight,
         },
     }
-
-
-def _is_lightweight_goal(goal: str) -> bool:
-    """Return True when the goal clearly asks for a short-form deliverable."""
-    lowered = goal.lower()
-    return any(
-        phrase in lowered
-        for phrase in (
-            "under 100 words",
-            "under 150 words",
-            "under 200 words",
-            "bullet-point list",
-            "bullet point list",
-            "brief answer",
-            "short answer",
-            "smoke test",
-            "sanity check",
-        )
-    )
-
-
 def _iter_claim_candidates(text: str) -> list[str]:
     """Return bullet items and sentences as candidate claims."""
     candidates: list[str] = []

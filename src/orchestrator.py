@@ -12,18 +12,31 @@ import csv
 import importlib.metadata
 import json
 import logging
-import platform
-import re
 import subprocess
-from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from .backends import CLAUDE_SHORTNAMES, AgentResponse, Backend, CallOptions, get_backends
+from .artifacts import (
+    dashboard_payload,
+    evaluation_payload,
+    load_json_if_exists,
+    metrics_payload,
+    pdf_run_summary_text,
+    run_manifest_payload,
+    should_write_evaluation,
+)
 from .config import ResearchConfig
+from .constraints import (
+    format_results_table,
+    goal_constraints_summary,
+    is_lightweight_mode,
+    postprocess_goal_output,
+    synthesis_knowledge_context,
+    synthesis_results_summary,
+)
+from .comparison import benchmark_summary, reference_run_comparison
 from .provenance import (
     detect_claim_conflicts,
     extract_citations,
@@ -43,6 +56,13 @@ from .scorer import (
     heuristic_score,
     parse_judge_response,
     quality_score_from_judge,
+)
+from .semantic_eval import (
+    semantic_calibration,
+    semantic_review_disabled,
+    semantic_review_empty,
+    semantic_review_fallback,
+    semantic_review_from_payload,
 )
 from .strategy import ResearchCandidate, Strategy, get_strategy
 
@@ -877,142 +897,64 @@ class AutoResearcher:
 
     def _is_lightweight_mode(self) -> bool:
         """Return True when the run should optimize for brevity and low overhead."""
-        if self.config.execution.lightweight_mode:
-            return True
-
-        goal_text = f"{self.config.goal} {self.config.topic}".lower()
-        short_goal = any(
-            phrase in goal_text
-            for phrase in (
-                "under 100 words",
-                "under 150 words",
-                "under 200 words",
-                "bullet-point list",
-                "bullet point list",
-                "brief answer",
-                "short answer",
-                "smoke test",
-                "sanity check",
-            )
+        return is_lightweight_mode(
+            explicit_enabled=self.config.execution.lightweight_mode,
+            goal=self.config.goal,
+            topic=self.config.topic,
+            dimensions_count=len(self.config.dimensions),
+            max_iterations=self.config.execution.max_iterations,
+            allowed_tools=self.config.execution.allowed_tools,
         )
-        small_run = (
-            len(self.config.dimensions) <= 2
-            and self.config.execution.max_iterations in {0, 1}
-            and not self.config.execution.allowed_tools
-        )
-        return short_goal or small_run
 
     def _goal_constraints_summary(self) -> str:
         """Extract explicit deliverable constraints from the goal text."""
-        goal = self.config.goal.strip()
-        if not goal:
-            return "- Deliverable shape: not explicitly constrained."
-
-        lines: list[str] = [f"- Deliverable goal: {goal}"]
-        lowered = goal.lower()
-        if "bullet" in lowered:
-            lines.append("- Format: use bullet points instead of a long narrative report.")
-        if "table" in lowered:
-            lines.append("- Format: include a compact table if it helps satisfy the goal.")
-        word_match = re.search(r"under\s+(\d+)\s+words?", lowered)
-        if word_match:
-            lines.append(f"- Hard limit: keep the final answer under {word_match.group(1)} words.")
-        if any(term in lowered for term in ("brief", "short", "concise")):
-            lines.append("- Style: be concise and avoid extra sections.")
-        if self._is_lightweight_mode():
-            lines.append("- Mode: lightweight mode is active; prefer the shortest output that still satisfies the goal.")
-        return "\n".join(lines)
+        return goal_constraints_summary(self.config.goal, lightweight_mode=self._is_lightweight_mode())
 
     def _goal_word_limit(self) -> int | None:
         """Return an explicit 'under N words' constraint when present."""
-        match = re.search(r"under\s+(\d+)\s+words?", self.config.goal.lower())
-        return int(match.group(1)) if match else None
+        from .constraints import goal_word_limit
+
+        return goal_word_limit(self.config.goal)
 
     def _goal_requires_bullets(self) -> bool:
         """Return True when the goal explicitly asks for bullets/list output."""
-        lowered = self.config.goal.lower()
-        return "bullet-point" in lowered or "bullet point" in lowered or "bullet" in lowered or "list" in lowered
+        from .constraints import goal_requires_bullets
+
+        return goal_requires_bullets(self.config.goal)
 
     def _postprocess_goal_output(self, text: str) -> str:
         """Deterministically repair short-form outputs to obey explicit goal constraints."""
-        text = text.strip()
-        if not text:
-            return text
-
-        if self._goal_requires_bullets():
-            text = self._coerce_to_bullets(text)
-
-        word_limit = self._goal_word_limit()
-        if word_limit:
-            text = self._trim_to_word_limit(text, word_limit)
-
-        return text.strip()
+        return postprocess_goal_output(text, goal=self.config.goal)
 
     @staticmethod
     def _trim_to_word_limit(text: str, word_limit: int) -> str:
         """Trim text while preserving basic bullet structure."""
-        words = text.split()
-        if len(words) <= word_limit:
-            return text
+        from .constraints import trim_to_word_limit
 
-        trimmed = " ".join(words[:word_limit]).rstrip(" ,;:-")
-        bullet_lines = [line for line in trimmed.splitlines() if line.strip()]
-        if bullet_lines and all(line.lstrip().startswith("-") for line in bullet_lines):
-            return "\n".join(line.rstrip() for line in bullet_lines)
-        return trimmed
+        return trim_to_word_limit(text, word_limit)
 
     @staticmethod
     def _coerce_to_bullets(text: str) -> str:
         """Convert paragraphs/sentences into compact bullet lines."""
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        bullets = [line for line in lines if line.startswith(("- ", "* "))]
-        if bullets:
-            return "\n".join("- " + line[2:].strip() if line.startswith("* ") else line for line in bullets)
+        from .constraints import coerce_to_bullets
 
-        cleaned = re.sub(r"^#+\s*", "", text, flags=re.MULTILINE).strip()
-        sentence_parts = re.split(r"(?<=[.!?])\s+", cleaned)
-        compact = [part.strip(" -") for part in sentence_parts if part.strip()]
-        if not compact:
-            compact = [cleaned]
-        compact = compact[:6]
-        return "\n".join(f"- {part}" for part in compact if part)
+        return coerce_to_bullets(text)
 
     def _synthesis_knowledge_context(self) -> str:
         """Return the knowledge context to send to synthesis."""
-        if not self._is_lightweight_mode():
-            return self.knowledge_base
-
-        words = self.knowledge_base.split()
-        if len(words) <= LIGHTWEIGHT_KB_WORDS:
-            return self.knowledge_base
-        return " ".join(words[:LIGHTWEIGHT_KB_WORDS]) + "\n\n[lightweight mode: truncated knowledge base]"
+        return synthesis_knowledge_context(
+            self.knowledge_base,
+            lightweight_mode=self._is_lightweight_mode(),
+            lightweight_kb_words=LIGHTWEIGHT_KB_WORDS,
+        )
 
     def _synthesis_results_summary(self) -> str:
         """Return a run summary tailored for synthesis prompting."""
-        if not self.results:
-            return "(no results yet)"
-        if not self._is_lightweight_mode():
-            return self._format_results_table()
-
-        recent = self.results[-3:]
-        return "\n".join(
-            f"- Iter {row.get('iteration', '?')}: {row.get('dimension', '?')} — score {row.get('total_score', '?')} ({row.get('status', '?')})"
-            for row in recent
-        )
+        return synthesis_results_summary(self.results, lightweight_mode=self._is_lightweight_mode())
 
     def _format_results_table(self) -> str:
         """Format the results log as a markdown table for synthesis prompts."""
-        if not self.results:
-            return "(no results yet)"
-        lines = ["| Iter | Dimension | Score | Status |", "|------|-----------|-------|--------|"]
-        for r in self.results:
-            lines.append(
-                f"| {r.get('iteration', '?')} "
-                f"| {r.get('dimension', '?')[:40]} "
-                f"| {r.get('total_score', '?')} "
-                f"| {r.get('status', '?')} |"
-            )
-        return "\n".join(lines)
+        return format_results_table(self.results)
 
     def _write_methods(self) -> None:
         """Write a human-readable methods artifact for the run."""
@@ -1067,68 +1009,38 @@ class AutoResearcher:
 
     def _write_run_manifest(self) -> None:
         """Write a machine-readable manifest for reproducibility."""
-        payload = {
-            "project": {
-                "name": "autoresearch",
-                "version": self._package_version(),
-            },
-            "run": {
-                "status": self._run_status,
-                "started_at": self._run_started_at,
-                "completed_at": self._run_completed_at,
-                "resume_requested": self.resume,
-                "output_dir": str(self.output_dir.resolve()),
-            },
-            "config": {
-                "path": str(self.config_path.resolve()) if self.config_path else None,
-                "snapshot": asdict(self.config),
-            },
-            "strategy": {
-                "name": self.config.execution.strategy,
-                "description": self.strategy.describe(),
-            },
-              "evaluation": {
-                  "benchmark_id": self.config.evaluation.benchmark_id,
-                  "run_baselines": self.config.evaluation.run_baselines,
-                  "semantic_review": self.config.evaluation.semantic_review,
-              },
-              "reporting": {
-                  "export_html": self.config.reporting.export_html,
-                  "export_pdf": self.config.reporting.export_pdf,
-                  "report_title": self.config.reporting.report_title,
-              },
-              "environment": {
-                "python_version": platform.python_version(),
-                "platform": platform.platform(),
-                "git_commit": self._git_commit(),
-            },
-            "backends": {
-                name: {
-                    "cli": backend.cli_executable(),
-                    "version": self._cli_version(backend.cli_executable()),
-                }
-                for name, backend in self.backends.items()
-            },
-        }
+        payload = run_manifest_payload(
+            config=self.config,
+            strategy_description=self.strategy.describe(),
+            backends=self.backends,
+            output_dir=self.output_dir,
+            resume=self.resume,
+            config_path=self.config_path,
+            run_status=self._run_status,
+            run_started_at=self._run_started_at,
+            run_completed_at=self._run_completed_at,
+            package_version=self._package_version(),
+            git_commit=self._git_commit(),
+            cli_version_resolver=self._cli_version,
+        )
         self.manifest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def _write_metrics(self) -> None:
         """Write machine-readable run metrics."""
-        payload = {
-            "run_status": self._run_status,
-            "benchmark_id": self.config.evaluation.benchmark_id,
-            "iterations": self.iteration,
-            "best_score": self.best_score,
-            "explored_dimensions_count": len(self.explored_dimensions),
-            "explored_dimensions": self.explored_dimensions,
-            "discovered_dimensions": self.discovered_dimensions,
-            "total_cost_usd": self.total_cost,
-            "total_input_tokens": self.total_input_tokens,
-            "total_output_tokens": self.total_output_tokens,
-            "per_backend_costs": self.per_backend_costs,
-            "per_backend_tokens": self.per_backend_tokens,
-            "results": self.results,
-        }
+        payload = metrics_payload(
+            benchmark_id=self.config.evaluation.benchmark_id,
+            run_status=self._run_status,
+            iteration=self.iteration,
+            best_score=self.best_score,
+            explored_dimensions=self.explored_dimensions,
+            discovered_dimensions=self.discovered_dimensions,
+            total_cost=self.total_cost,
+            total_input_tokens=self.total_input_tokens,
+            total_output_tokens=self.total_output_tokens,
+            per_backend_costs=self.per_backend_costs,
+            per_backend_tokens=self.per_backend_tokens,
+            results=self.results,
+        )
         self.metrics_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def _collect_provenance(self, text: str, *, scope: str, dimension: str = "") -> None:
@@ -1219,45 +1131,21 @@ class AutoResearcher:
         semantic_calibration: dict[str, Any],
     ) -> None:
         """Write optional evaluation summary comparing iterative output to a baseline."""
-        if (
-            not self.config.evaluation.run_baselines
-            and not self.config.evaluation.benchmark_id
-            and not self.config.evaluation.reference_runs
-            and not self.config.evaluation.semantic_review
-        ):
+        if not should_write_evaluation(self.config):
             return
 
-        baseline_claims = [claim for claim in self._claims if claim.get("scope") == "baseline"]
-        synthesis_claims = [claim for claim in self._claims if claim.get("scope") == "synthesis"]
-        baseline_citations = [citation for citation in self._citations if citation.get("scope") == "baseline"]
-        synthesis_citations = [citation for citation in self._citations if citation.get("scope") == "synthesis"]
-        payload = {
-            "benchmark_id": self.config.evaluation.benchmark_id,
-            "baseline_generated": self.baseline_path.exists(),
-            "iterative_synthesis": {
-                "claims_count": len(synthesis_claims),
-                "citations_count": len(synthesis_citations),
-            },
-            "baseline": {
-                "claims_count": len(baseline_claims),
-                "citations_count": len(baseline_citations),
-            },
-            "evidence_quality": evidence_quality,
-            "rubric": rubric,
-            "benchmark": benchmark_summary,
-            "reference_comparison": reference_comparison,
-            "semantic_review": semantic_review,
-            "semantic_calibration": semantic_calibration,
-            "summary": {
-                "iterative_has_more_claims_than_baseline": len(synthesis_claims) > len(baseline_claims),
-                "iterative_has_more_citations_than_baseline": len(synthesis_citations) > len(baseline_citations),
-                "benchmark_expectations_satisfied": benchmark_summary.get("all_expectations_satisfied", True),
-                "reference_runs_compared": reference_comparison.get("compared_runs_count", 0),
-                "rubric_grade": rubric.get("grade", "insufficient"),
-                "semantic_review_grade": semantic_review.get("grade", "disabled"),
-                "semantic_calibration_grade": semantic_calibration.get("grade", "disabled"),
-            },
-        }
+        payload = evaluation_payload(
+            benchmark_id=self.config.evaluation.benchmark_id,
+            baseline_exists=self.baseline_path.exists(),
+            claims=self._claims,
+            citations=self._citations,
+            evidence_quality=evidence_quality,
+            rubric=rubric,
+            benchmark_summary=benchmark_summary,
+            reference_comparison=reference_comparison,
+            semantic_review=semantic_review,
+            semantic_calibration=semantic_calibration,
+        )
         self.evaluation_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         self.comparison_path.write_text(json.dumps(reference_comparison, indent=2), encoding="utf-8")
         self.strategy_summary_path.write_text(
@@ -1270,39 +1158,15 @@ class AutoResearcher:
         if not self.config.reporting.export_html:
             return
 
-        manifest = json.loads(self.manifest_path.read_text(encoding="utf-8")) if self.manifest_path.exists() else {}
-        metrics = json.loads(self.metrics_path.read_text(encoding="utf-8")) if self.metrics_path.exists() else {}
-        evidence_quality = (
-            json.loads(self.evidence_quality_path.read_text(encoding="utf-8"))
-            if self.evidence_quality_path.exists()
-            else {}
-        )
-        rubric = json.loads(self.rubric_path.read_text(encoding="utf-8")) if self.rubric_path.exists() else {}
-        evaluation = (
-            json.loads(self.evaluation_path.read_text(encoding="utf-8"))
-            if self.evaluation_path.exists()
-            else None
-        )
-        comparison = (
-            json.loads(self.comparison_path.read_text(encoding="utf-8"))
-            if self.comparison_path.exists()
-            else None
-        )
-        semantic_calibration = (
-            json.loads(self.semantic_calibration_path.read_text(encoding="utf-8"))
-            if self.semantic_calibration_path.exists()
-            else None
-        )
-        semantic_review = (
-            json.loads(self.semantic_review_path.read_text(encoding="utf-8"))
-            if self.semantic_review_path.exists()
-            else None
-        )
-        dashboard = (
-            json.loads(self.dashboard_path.read_text(encoding="utf-8"))
-            if self.dashboard_path.exists()
-            else None
-        )
+        manifest = load_json_if_exists(self.manifest_path, {})
+        metrics = load_json_if_exists(self.metrics_path, {})
+        evidence_quality = load_json_if_exists(self.evidence_quality_path, {})
+        rubric = load_json_if_exists(self.rubric_path, {})
+        evaluation = load_json_if_exists(self.evaluation_path, None)
+        comparison = load_json_if_exists(self.comparison_path, None)
+        semantic_calibration = load_json_if_exists(self.semantic_calibration_path, None)
+        semantic_review = load_json_if_exists(self.semantic_review_path, None)
+        dashboard = load_json_if_exists(self.dashboard_path, None)
         methods_text = self.methods_path.read_text(encoding="utf-8") if self.methods_path.exists() else ""
         synthesis_text = self.synthesis_path.read_text(encoding="utf-8") if self.synthesis_path.exists() else ""
         title = self.config.reporting.report_title or f"Autoresearch Report — {self.config.topic}"
@@ -1330,27 +1194,18 @@ class AutoResearcher:
             return
 
         title = self.config.reporting.report_title or f"Autoresearch Report — {self.config.topic}"
-        metrics = json.loads(self.metrics_path.read_text(encoding="utf-8")) if self.metrics_path.exists() else {}
-        rubric = json.loads(self.rubric_path.read_text(encoding="utf-8")) if self.rubric_path.exists() else {}
-        evidence_quality = (
-            json.loads(self.evidence_quality_path.read_text(encoding="utf-8"))
-            if self.evidence_quality_path.exists()
-            else {}
-        )
-        evaluation = (
-            json.loads(self.evaluation_path.read_text(encoding="utf-8"))
-            if self.evaluation_path.exists()
-            else {}
-        )
-        dashboard = (
-            json.loads(self.dashboard_path.read_text(encoding="utf-8"))
-            if self.dashboard_path.exists()
-            else {}
-        )
+        metrics = load_json_if_exists(self.metrics_path, {})
+        rubric = load_json_if_exists(self.rubric_path, {})
+        evidence_quality = load_json_if_exists(self.evidence_quality_path, {})
+        evaluation = load_json_if_exists(self.evaluation_path, {})
+        dashboard = load_json_if_exists(self.dashboard_path, {})
         methods_text = self.methods_path.read_text(encoding="utf-8") if self.methods_path.exists() else ""
         synthesis_text = self.synthesis_path.read_text(encoding="utf-8") if self.synthesis_path.exists() else ""
         sections = [
-            ("Run Summary", self._pdf_run_summary_text(metrics, rubric, evidence_quality)),
+            (
+                "Run Summary",
+                self._pdf_run_summary_text(metrics, rubric, evidence_quality),
+            ),
             ("Methods", methods_text),
             ("Synthesis", synthesis_text),
             ("Dashboard", json.dumps(dashboard, indent=2)),
@@ -1365,70 +1220,44 @@ class AutoResearcher:
         evidence_quality: dict[str, Any],
     ) -> str:
         """Format core run summary text for PDF export."""
-        return (
-            f"Topic: {self.config.topic}\n"
-            f"Goal: {self.config.goal}\n"
-            f"Strategy: {self.config.execution.strategy}\n"
-            f"Best score: {metrics.get('best_score', self.best_score)}\n"
-            f"Iterations: {metrics.get('iterations', self.iteration)}\n"
-            f"Rubric grade: {rubric.get('grade', 'insufficient')}\n"
-            f"Evidence quality: {evidence_quality.get('average_evidence_quality_score', 0.0)}\n"
-            f"Explored dimensions: {', '.join(metrics.get('explored_dimensions', self.explored_dimensions)) or '(none)'}\n"
+        return pdf_run_summary_text(
+            topic=self.config.topic,
+            goal=self.config.goal,
+            strategy=self.config.execution.strategy,
+            best_score=self.best_score,
+            iteration=self.iteration,
+            explored_dimensions=self.explored_dimensions,
+            metrics=metrics,
+            rubric=rubric,
+            evidence_quality=evidence_quality,
         )
 
     def _write_dashboard_artifact(self) -> None:
         """Write a stakeholder-friendly summary dashboard artifact."""
-        rubric = json.loads(self.rubric_path.read_text(encoding="utf-8")) if self.rubric_path.exists() else {}
-        evidence_quality = (
-            json.loads(self.evidence_quality_path.read_text(encoding="utf-8"))
-            if self.evidence_quality_path.exists()
-            else {}
-        )
-        comparison = (
-            json.loads(self.comparison_path.read_text(encoding="utf-8"))
-            if self.comparison_path.exists()
-            else {}
-        )
-        evaluation = (
-            json.loads(self.evaluation_path.read_text(encoding="utf-8"))
-            if self.evaluation_path.exists()
-            else {}
-        )
-        strategy_summary = (
-            json.loads(self.strategy_summary_path.read_text(encoding="utf-8"))
-            if self.strategy_summary_path.exists()
-            else {}
-        )
+        rubric = load_json_if_exists(self.rubric_path, {})
+        evidence_quality = load_json_if_exists(self.evidence_quality_path, {})
+        comparison = load_json_if_exists(self.comparison_path, {})
+        evaluation = load_json_if_exists(self.evaluation_path, {})
+        strategy_summary = load_json_if_exists(self.strategy_summary_path, {})
+        semantic_calibration = load_json_if_exists(self.semantic_calibration_path, {})
+        semantic_review = load_json_if_exists(self.semantic_review_path, {})
 
-        payload = {
-            "topic": self.config.topic,
-            "goal": self.config.goal,
-            "benchmark_id": self.config.evaluation.benchmark_id,
-            "current_strategy": self.config.execution.strategy,
-            "best_score": self.best_score,
-            "rubric_grade": rubric.get("grade", "insufficient"),
-            "rubric_overall_score": rubric.get("overall_score", 0.0),
-            "evidence_quality_score": evidence_quality.get("average_evidence_quality_score", 0.0),
-            "iterations": self.iteration,
-            "explored_dimensions_count": len(self.explored_dimensions),
-            "explored_dimensions": self.explored_dimensions,
-            "strategy_summary": strategy_summary,
-            "consistency_level": comparison.get("summary", {}).get("consistency_level", "not_available"),
-            "reference_runs_compared": comparison.get("compared_runs_count", 0),
-            "benchmark_expectations_satisfied": evaluation.get("summary", {}).get(
-                "benchmark_expectations_satisfied", True
-            ),
-            "semantic_calibration": (
-                json.loads(self.semantic_calibration_path.read_text(encoding="utf-8"))
-                if self.semantic_calibration_path.exists()
-                else {}
-            ),
-            "semantic_review": (
-                json.loads(self.semantic_review_path.read_text(encoding="utf-8"))
-                if self.semantic_review_path.exists()
-                else {}
-            ),
-        }
+        payload = dashboard_payload(
+            topic=self.config.topic,
+            goal=self.config.goal,
+            benchmark_id=self.config.evaluation.benchmark_id,
+            current_strategy=self.config.execution.strategy,
+            best_score=self.best_score,
+            iteration=self.iteration,
+            explored_dimensions=self.explored_dimensions,
+            rubric=rubric,
+            evidence_quality=evidence_quality,
+            comparison=comparison,
+            evaluation=evaluation,
+            strategy_summary=strategy_summary,
+            semantic_calibration=semantic_calibration,
+            semantic_review=semantic_review,
+        )
         self.dashboard_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def _write_portfolio_artifacts(self) -> None:
@@ -1453,32 +1282,12 @@ class AutoResearcher:
     ) -> dict[str, Any]:
         """Optionally run a final judge pass over the synthesized report."""
         if not self.config.evaluation.semantic_review:
-            return {
-                "enabled": False,
-                "overall_score": 0.0,
-                "grade": "disabled",
-                "judge_backend": "",
-                "dimensions": {},
-                "summary": "",
-            }
+            return semantic_review_disabled()
 
         synthesis_text = self.synthesis_path.read_text(encoding="utf-8") if self.synthesis_path.exists() else ""
+        judge_backend = self.strategy.get_judge_backend()
         if not synthesis_text.strip():
-            return {
-                "enabled": True,
-                "overall_score": 0.0,
-                "grade": "weak",
-                "judge_backend": self.strategy.get_judge_backend().name,
-                "dimensions": {
-                    "coherence": 0.0,
-                    "support": 0.0,
-                    "limitations": 0.0,
-                    "contradiction_handling": 0.0,
-                    "decision_readiness": 0.0,
-                },
-                "summary": "No synthesis was available for semantic review.",
-                "raw_response": "",
-            }
+            return semantic_review_empty(judge_backend=judge_backend.name)
 
         prompt = _render(
             "semantic_judge.md",
@@ -1490,27 +1299,15 @@ class AutoResearcher:
             benchmark_summary=json.dumps(benchmark_summary, indent=2),
             contradictions=json.dumps(contradictions, indent=2),
         )
-        judge_backend = self.strategy.get_judge_backend()
         resp = self._call_with(judge_backend, prompt, max_turns=3)
         self._track_usage(resp, judge_backend.name)
 
-        fallback = {
-            "enabled": True,
-            "judge_backend": judge_backend.name,
-            "overall_score": float(rubric.get("overall_score", 0.0)),
-            "grade": rubric.get("grade", "developing"),
-            "dimensions": {
-                "coherence": float(rubric.get("dimensions", {}).get("actionability", 0.0)),
-                "support": float(evidence_quality.get("average_evidence_quality_score", 0.0)),
-                "limitations": float(rubric.get("dimensions", {}).get("uncertainty_reporting", 0.0)),
-                "contradiction_handling": float(
-                    rubric.get("dimensions", {}).get("contradiction_handling", 0.0)
-                ),
-                "decision_readiness": float(rubric.get("dimensions", {}).get("actionability", 0.0)),
-            },
-            "summary": "Fallback semantic review derived from rubric and evidence quality.",
-            "raw_response": resp.text,
-        }
+        fallback = semantic_review_fallback(
+            judge_backend=judge_backend.name,
+            rubric=rubric,
+            evidence_quality=evidence_quality,
+            raw_response=resp.text,
+        )
 
         if resp.is_error or not resp.text:
             return fallback
@@ -1519,36 +1316,7 @@ class AutoResearcher:
         except json.JSONDecodeError:
             return fallback
 
-        dimensions = payload.get("dimensions", {})
-        dimension_scores = [
-            float(dimensions.get(key, 0.0))
-            for key in ("coherence", "support", "limitations", "contradiction_handling", "decision_readiness")
-        ]
-        overall_score = round(sum(dimension_scores) / len(dimension_scores), 2) if dimension_scores else 0.0
-        grade = payload.get("grade") or (
-            "strong"
-            if overall_score >= 0.8
-            else "good"
-            if overall_score >= 0.6
-            else "developing"
-            if overall_score >= 0.4
-            else "weak"
-        )
-        return {
-            "enabled": True,
-            "judge_backend": judge_backend.name,
-            "overall_score": overall_score,
-            "grade": grade,
-            "dimensions": {
-                "coherence": float(dimensions.get("coherence", 0.0)),
-                "support": float(dimensions.get("support", 0.0)),
-                "limitations": float(dimensions.get("limitations", 0.0)),
-                "contradiction_handling": float(dimensions.get("contradiction_handling", 0.0)),
-                "decision_readiness": float(dimensions.get("decision_readiness", 0.0)),
-            },
-            "summary": payload.get("summary", ""),
-            "raw_response": resp.text,
-        }
+        return semantic_review_from_payload(payload, judge_backend=judge_backend.name, raw_response=resp.text)
 
     def _semantic_calibration(
         self,
@@ -1559,80 +1327,16 @@ class AutoResearcher:
         reference_comparison: dict[str, Any],
     ) -> dict[str, Any]:
         """Combine rubric, benchmark, evidence, and consistency into a calibrated quality score."""
-        if not self.config.evaluation.semantic_calibration:
-            return {
-                "enabled": False,
-                "calibrated_score": 0.0,
-                "grade": "disabled",
-                "profile": "disabled",
-                "weights": {},
-                "components": {},
-            }
-
-        rubric_score = float(rubric.get("overall_score", 0.0))
-        evidence_score = float(evidence_quality.get("average_evidence_quality_score", 0.0))
-        benchmark_score = round(
-            (
-                float(benchmark_summary.get("dimension_coverage_score", 1.0))
-                + float(benchmark_summary.get("keyword_coverage_score", 1.0))
-            )
-            / 2,
-            2,
-        )
-        reference_summary = reference_comparison.get("summary", {})
-        consistency_score = round(
-            (
-                float(reference_summary.get("average_dimension_overlap", 0.0))
-                + float(reference_summary.get("average_citation_overlap", 0.0))
-                + float(reference_summary.get("average_claim_overlap", 0.0))
-            )
-            / 3,
-            2,
-        ) if reference_comparison.get("compared_runs_count", 0) else 0.5
-        uncertainty_score = float(rubric.get("dimensions", {}).get("uncertainty_reporting", 0.0))
-        contradiction_score = float(rubric.get("dimensions", {}).get("contradiction_handling", 1.0))
-        actionability_score = float(rubric.get("dimensions", {}).get("actionability", 0.0))
-        profile, weights = self._semantic_weight_profile(
+        return semantic_calibration(
+            enabled=self.config.evaluation.semantic_calibration,
+            goal=self.config.goal,
+            methodology_question=self.config.methodology.question,
+            methodology_scope=self.config.methodology.scope,
+            rubric=rubric,
+            evidence_quality=evidence_quality,
             benchmark_summary=benchmark_summary,
             reference_comparison=reference_comparison,
         )
-
-        calibrated_score = round(
-            rubric_score * weights["rubric_score"]
-            + evidence_score * weights["evidence_score"]
-            + benchmark_score * weights["benchmark_score"]
-            + consistency_score * weights["consistency_score"]
-            + uncertainty_score * weights["uncertainty_score"]
-            + contradiction_score * weights["contradiction_score"]
-            + actionability_score * weights["actionability_score"],
-            2,
-        )
-
-        if calibrated_score >= 0.85:
-            grade = "well_calibrated"
-        elif calibrated_score >= 0.65:
-            grade = "reasonable"
-        elif calibrated_score >= 0.45:
-            grade = "tentative"
-        else:
-            grade = "weak"
-
-        return {
-            "enabled": True,
-            "calibrated_score": calibrated_score,
-            "grade": grade,
-            "profile": profile,
-            "weights": weights,
-            "components": {
-                "rubric_score": rubric_score,
-                "evidence_score": evidence_score,
-                "benchmark_score": benchmark_score,
-                "consistency_score": consistency_score,
-                "uncertainty_score": uncertainty_score,
-                "contradiction_score": contradiction_score,
-                "actionability_score": actionability_score,
-            },
-        }
 
     def _semantic_weight_profile(
         self,
@@ -1641,325 +1345,60 @@ class AutoResearcher:
         reference_comparison: dict[str, Any],
     ) -> tuple[str, dict[str, float]]:
         """Choose semantic calibration weights based on task shape and available signals."""
-        methodology_text = (
-            f"{self.config.goal} {self.config.methodology.question} {self.config.methodology.scope}"
-        ).lower()
-        has_benchmark = bool(
-            self.config.evaluation.benchmark_id
-            or benchmark_summary.get("expected_dimensions")
-            or benchmark_summary.get("required_keywords")
+        from .semantic_eval import semantic_weight_profile
+
+        return semantic_weight_profile(
+            goal=self.config.goal,
+            methodology_question=self.config.methodology.question,
+            methodology_scope=self.config.methodology.scope,
+            benchmark_summary=benchmark_summary,
+            reference_comparison=reference_comparison,
         )
-        has_references = bool(reference_comparison.get("compared_runs_count", 0))
-        comparison_oriented = any(
-            term in methodology_text for term in ("compare", "comparison", "evaluate", "vendor", "benchmark")
-        )
-        decision_oriented = any(
-            term in methodology_text for term in ("decision", "recommend", "adr", "adopt", "choose")
-        )
-
-        weights = {
-            "rubric_score": 0.35,
-            "evidence_score": 0.2,
-            "benchmark_score": 0.15,
-            "consistency_score": 0.1,
-            "uncertainty_score": 0.05,
-            "contradiction_score": 0.05,
-            "actionability_score": 0.1,
-        }
-        profile = "balanced"
-
-        if comparison_oriented or has_benchmark:
-            weights.update(
-                {
-                    "rubric_score": 0.3,
-                    "evidence_score": 0.2,
-                    "benchmark_score": 0.25,
-                    "consistency_score": 0.1 if has_references else 0.05,
-                    "uncertainty_score": 0.05,
-                    "contradiction_score": 0.05,
-                    "actionability_score": 0.05,
-                }
-            )
-            profile = "benchmark_weighted"
-
-        if has_references:
-            weights["consistency_score"] += 0.05
-            weights["rubric_score"] -= 0.03
-            weights["actionability_score"] -= 0.02
-            profile = "consistency_weighted" if profile == "balanced" else f"{profile}+consistency"
-
-        if decision_oriented:
-            weights["actionability_score"] += 0.05
-            weights["rubric_score"] -= 0.03
-            weights["benchmark_score"] -= 0.02
-            profile = "decision_weighted" if profile == "balanced" else f"{profile}+decision"
-
-        total = sum(weights.values())
-        normalized = {key: round(value / total, 4) for key, value in weights.items()}
-        return profile, normalized
 
     @staticmethod
     def _normalize_claim_text(text: str) -> str:
         """Normalize claim text for crude overlap comparisons."""
-        return " ".join(text.lower().split())
+        from .comparison import normalize_claim_text
+
+        return normalize_claim_text(text)
 
     def _reference_run_comparison(self) -> dict[str, Any]:
         """Compare the current run to referenced prior outputs for consistency analysis."""
-        if not self.config.evaluation.reference_runs:
-            return {
-                "compared_runs_count": 0,
-                "runs": [],
-                "strategy_summary": self._summarize_strategies([]),
-                "summary": {
-                    "average_dimension_overlap": 0.0,
-                    "average_citation_overlap": 0.0,
-                    "average_claim_overlap": 0.0,
-                    "average_score_delta": 0.0,
-                    "consistency_level": "not_available",
-                },
-            }
-
-        current_dimensions = set(self.explored_dimensions)
-        current_citations = {citation.get("url", "") for citation in self._citations if citation.get("url")}
-        current_claims = {
-            self._normalize_claim_text(claim.get("text", ""))
-            for claim in self._claims
-            if claim.get("scope") == "synthesis" and claim.get("text")
-        }
-
-        runs: list[dict[str, Any]] = []
-        for raw_path in self.config.evaluation.reference_runs:
-            ref_dir = Path(raw_path)
-            metrics_path = ref_dir / "metrics.json"
-            manifest_path = ref_dir / "run_manifest.json"
-            claims_path = ref_dir / "claims.json"
-            citations_path = ref_dir / "citations.json"
-            if not metrics_path.exists():
-                runs.append(
-                    {
-                        "path": str(ref_dir),
-                        "status": "missing_metrics",
-                    }
-                )
-                continue
-
-            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-            manifest = (
-                json.loads(manifest_path.read_text(encoding="utf-8"))
-                if manifest_path.exists()
-                else {}
-            )
-            claims = json.loads(claims_path.read_text(encoding="utf-8")) if claims_path.exists() else []
-            citations = json.loads(citations_path.read_text(encoding="utf-8")) if citations_path.exists() else []
-
-            ref_dimensions = set(metrics.get("explored_dimensions", []))
-            ref_citations = {citation.get("url", "") for citation in citations if citation.get("url")}
-            ref_claims = {
-                self._normalize_claim_text(claim.get("text", ""))
-                for claim in claims
-                if claim.get("scope") == "synthesis" and claim.get("text")
-            }
-
-            dimension_union = current_dimensions | ref_dimensions
-            citation_union = current_citations | ref_citations
-            claim_union = current_claims | ref_claims
-
-            dimension_overlap = (
-                len(current_dimensions & ref_dimensions) / len(dimension_union)
-                if dimension_union
-                else 1.0
-            )
-            citation_overlap = (
-                len(current_citations & ref_citations) / len(citation_union)
-                if citation_union
-                else 1.0
-            )
-            claim_overlap = (
-                len(current_claims & ref_claims) / len(claim_union)
-                if claim_union
-                else 1.0
-            )
-
-            runs.append(
-                {
-                    "path": str(ref_dir),
-                    "status": "ok",
-                    "strategy": manifest.get("strategy", {}).get("name", ""),
-                    "benchmark_id": metrics.get("benchmark_id") or manifest.get("evaluation", {}).get("benchmark_id", ""),
-                    "best_score": metrics.get("best_score", 0.0),
-                    "score_delta": round(self.best_score - float(metrics.get("best_score", 0.0)), 2),
-                    "dimension_overlap": round(dimension_overlap, 2),
-                    "citation_overlap": round(citation_overlap, 2),
-                    "claim_overlap": round(claim_overlap, 2),
-                    "shared_dimensions": sorted(current_dimensions & ref_dimensions),
-                }
-            )
-
-        successful = [run for run in runs if run.get("status") == "ok"]
-        if not successful:
-            return {
-                "compared_runs_count": 0,
-                "runs": runs,
-                "strategy_summary": self._summarize_strategies([]),
-                "summary": {
-                    "average_dimension_overlap": 0.0,
-                    "average_citation_overlap": 0.0,
-                    "average_claim_overlap": 0.0,
-                    "average_score_delta": 0.0,
-                    "consistency_level": "not_available",
-                },
-            }
-
-        avg_dimension = round(sum(run["dimension_overlap"] for run in successful) / len(successful), 2)
-        avg_citation = round(sum(run["citation_overlap"] for run in successful) / len(successful), 2)
-        avg_claim = round(sum(run["claim_overlap"] for run in successful) / len(successful), 2)
-        avg_score_delta = round(sum(run["score_delta"] for run in successful) / len(successful), 2)
-        consistency_signal = round((avg_dimension + avg_citation + avg_claim) / 3, 2)
-        if consistency_signal >= 0.75:
-            consistency_level = "high"
-        elif consistency_signal >= 0.4:
-            consistency_level = "medium"
-        else:
-            consistency_level = "low"
-
-        return {
-            "compared_runs_count": len(successful),
-            "runs": runs,
-            "strategy_summary": self._summarize_strategies(successful),
-            "summary": {
-                "average_dimension_overlap": avg_dimension,
-                "average_citation_overlap": avg_citation,
-                "average_claim_overlap": avg_claim,
-                "average_score_delta": avg_score_delta,
-                "consistency_level": consistency_level,
-            },
-        }
+        return reference_run_comparison(
+            reference_runs=self.config.evaluation.reference_runs,
+            current_strategy=self.config.execution.strategy,
+            current_best_score=self.best_score,
+            current_dimensions=self.explored_dimensions,
+            claims=self._claims,
+            citations=self._citations,
+        )
 
     def _summarize_strategies(self, successful_runs: list[dict[str, Any]]) -> dict[str, Any]:
         """Aggregate comparison metrics by strategy, including the current run."""
-        strategies: dict[str, dict[str, Any]] = {}
+        from .comparison import summarize_strategies
 
-        current_strategy = self.config.execution.strategy
-        strategies[current_strategy] = {
-            "strategy": current_strategy,
-            "role": "current",
-            "runs_count": 1,
-            "average_best_score": round(self.best_score, 2),
-            "average_score_delta": 0.0,
-            "average_dimension_overlap": 1.0,
-            "average_citation_overlap": 1.0,
-            "average_claim_overlap": 1.0,
-        }
-
-        buckets: dict[str, list[dict[str, Any]]] = {}
-        for run in successful_runs:
-            strategy = str(run.get("strategy", "") or "unknown")
-            buckets.setdefault(strategy, []).append(run)
-
-        for strategy, runs in buckets.items():
-            strategies[strategy] = {
-                "strategy": strategy,
-                "role": "reference",
-                "runs_count": len(runs),
-                "average_best_score": round(
-                    sum(float(run.get("best_score", 0.0)) for run in runs) / len(runs),
-                    2,
-                ),
-                "average_score_delta": round(
-                    sum(float(run.get("score_delta", 0.0)) for run in runs) / len(runs),
-                    2,
-                ),
-                "average_dimension_overlap": round(
-                    sum(float(run.get("dimension_overlap", 0.0)) for run in runs) / len(runs),
-                    2,
-                ),
-                "average_citation_overlap": round(
-                    sum(float(run.get("citation_overlap", 0.0)) for run in runs) / len(runs),
-                    2,
-                ),
-                "average_claim_overlap": round(
-                    sum(float(run.get("claim_overlap", 0.0)) for run in runs) / len(runs),
-                    2,
-                ),
-            }
-
-        ordered = sorted(strategies.values(), key=lambda item: (item["role"] != "current", -item["average_best_score"]))
-        best_reference = None
-        for entry in ordered:
-            if entry["role"] == "reference":
-                best_reference = entry
-                break
-
-        return {
-            "current_strategy": current_strategy,
-            "strategies": ordered,
-            "best_reference_strategy": best_reference["strategy"] if best_reference else "",
-        }
+        return summarize_strategies(
+            current_strategy=self.config.execution.strategy,
+            current_best_score=self.best_score,
+            successful_runs=successful_runs,
+        )
 
     def _load_benchmark_definition(self) -> dict[str, Any]:
         """Load a bundled benchmark definition when ``benchmark_id`` maps to a YAML file."""
-        benchmark_id = self.config.evaluation.benchmark_id.strip()
-        if not benchmark_id:
-            return {}
+        from .comparison import load_benchmark_definition
 
-        benchmark_path = Path("benchmarks") / f"{benchmark_id}.yaml"
-        if not benchmark_path.exists():
-            return {}
-
-        with benchmark_path.open("r", encoding="utf-8") as fh:
-            raw = yaml.safe_load(fh) or {}
-
-        return {
-            "benchmark_id": raw.get("benchmark_id", benchmark_id),
-            "title": raw.get("title", ""),
-            "description": raw.get("description", ""),
-            "expected_dimensions": list(raw.get("expected_dimensions", [])),
-            "required_keywords": list(raw.get("required_keywords", [])),
-        }
+        return load_benchmark_definition(self.config.evaluation.benchmark_id)
 
     def _benchmark_summary(self) -> dict[str, Any]:
         """Evaluate current run outputs against optional benchmark expectations."""
-        benchmark_definition = self._load_benchmark_definition()
-        expected_dimensions = (
-            list(self.config.evaluation.expected_dimensions)
-            or list(benchmark_definition.get("expected_dimensions", []))
-        )
-        required_keywords = (
-            list(self.config.evaluation.required_keywords)
-            or list(benchmark_definition.get("required_keywords", []))
-        )
         synthesis_text = self.synthesis_path.read_text(encoding="utf-8") if self.synthesis_path.exists() else ""
-        knowledge_text = self.knowledge_base or ""
-        searchable_text = f"{knowledge_text}\n\n{synthesis_text}".lower()
-
-        covered_dimensions = [dim for dim in expected_dimensions if dim.lower() in searchable_text]
-        matched_keywords = [kw for kw in required_keywords if kw.lower() in searchable_text]
-
-        dimension_score = (
-            len(covered_dimensions) / len(expected_dimensions) if expected_dimensions else 1.0
+        return benchmark_summary(
+            benchmark_id=self.config.evaluation.benchmark_id,
+            config_expected_dimensions=list(self.config.evaluation.expected_dimensions),
+            config_required_keywords=list(self.config.evaluation.required_keywords),
+            knowledge_text=self.knowledge_base or "",
+            synthesis_text=synthesis_text,
         )
-        keyword_score = (
-            len(matched_keywords) / len(required_keywords) if required_keywords else 1.0
-        )
-        all_expectations_satisfied = (
-            len(covered_dimensions) == len(expected_dimensions)
-            and len(matched_keywords) == len(required_keywords)
-        )
-
-        return {
-            "benchmark_id": benchmark_definition.get("benchmark_id", self.config.evaluation.benchmark_id),
-            "benchmark_title": benchmark_definition.get("title", ""),
-            "benchmark_description": benchmark_definition.get("description", ""),
-            "expected_dimensions": expected_dimensions,
-            "covered_dimensions": covered_dimensions,
-            "missing_dimensions": [dim for dim in expected_dimensions if dim not in covered_dimensions],
-            "required_keywords": required_keywords,
-            "matched_keywords": matched_keywords,
-            "missing_keywords": [kw for kw in required_keywords if kw not in matched_keywords],
-            "dimension_coverage_score": round(dimension_score, 2),
-            "keyword_coverage_score": round(keyword_score, 2),
-            "all_expectations_satisfied": all_expectations_satisfied,
-        }
 
     @staticmethod
     def _git_commit() -> str | None:
