@@ -97,3 +97,25 @@ def test_score_research_rubric():
     assert rubric["grade"] in {"strong", "good", "developing", "insufficient"}
     assert rubric["dimensions"]["citation_coverage"] >= 0.0
     assert rubric["summary"]["synthesis_claim_count"] == len(claims)
+
+
+def test_score_research_rubric_lightweight_goal_is_more_lenient():
+    text = """
+    - Python is beginner-friendly. High confidence.
+    - Large ecosystem. https://docs.python.org/3/
+    - Slower for CPU-bound workloads.
+    """
+    claims = extract_claims(text, scope="synthesis", dimension="Developer experience")
+    citations = extract_citations(text, scope="synthesis", retrieved_at="2026-04-09T00:00:00Z")
+    links = link_claims_to_citations(claims, citations)
+    default_rubric = score_research_rubric(claims, citations, links, contradictions=[], goal="")
+    lightweight_rubric = score_research_rubric(
+        claims,
+        citations,
+        links,
+        contradictions=[],
+        goal="A bullet-point list in under 100 words",
+        lightweight_mode=True,
+    )
+    assert lightweight_rubric["summary"]["lightweight_mode"] is True
+    assert lightweight_rubric["overall_score"] >= default_rubric["overall_score"]

@@ -630,7 +630,10 @@ class AutoResearcher:
             prompt = _render(
                 "evaluate.md",
                 topic=self.config.topic,
+                goal=self.config.goal,
                 methodology=self._methodology_summary(),
+                goal_constraints=self._goal_constraints_summary(),
+                lightweight_mode="yes" if self._is_lightweight_mode() else "no",
                 dimension=dimension,
                 findings=findings[:_MAX_FINDINGS_CHARS],
                 knowledge_summary=self._kb_summary(),
@@ -1145,7 +1148,14 @@ class AutoResearcher:
         evidence_links = link_claims_to_citations(self._claims, self._citations)
         evidence_quality = summarize_evidence_quality(self._claims, evidence_links)
         contradictions = detect_claim_conflicts(self._claims)
-        rubric = score_research_rubric(self._claims, self._citations, evidence_links, contradictions)
+        rubric = score_research_rubric(
+            self._claims,
+            self._citations,
+            evidence_links,
+            contradictions,
+            goal=self.config.goal,
+            lightweight_mode=self._is_lightweight_mode(),
+        )
         benchmark_summary = self._benchmark_summary()
         reference_comparison = self._reference_run_comparison()
         semantic_review = self._semantic_review(

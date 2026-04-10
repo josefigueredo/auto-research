@@ -211,6 +211,56 @@ class TestAutoResearcherSetup:
         assert "| Iter | Dimension | Score | Status |" not in prompt
         assert "- Iter 001: Developer experience" in prompt
 
+    def test_score_findings_prompt_mentions_short_goal_constraints(self, researcher):
+        researcher.config = ResearchConfig(
+            topic="What are three pros and cons of Python?",
+            goal="A bullet-point list in under 100 words",
+            dimensions=("Developer experience",),
+            methodology=researcher.config.methodology,
+            evaluation=researcher.config.evaluation,
+            reporting=researcher.config.reporting,
+            scoring=researcher.config.scoring,
+            execution=ExecutionConfig(
+                max_iterations=1,
+                backend="claude",
+                model="sonnet",
+                timeout_seconds=10,
+                max_budget_per_call=0.10,
+                allowed_tools="",
+            ),
+        )
+        captured: dict[str, str] = {}
+
+        def fake_call(backend, prompt, **kwargs):
+            captured["prompt"] = prompt
+            return AgentResponse(
+                text=json.dumps(
+                    {
+                        "depth": 7,
+                        "accuracy": 8,
+                        "novelty": 7,
+                        "actionability": 7,
+                        "dimensions_covered": ["Developer experience"],
+                        "gaps_identified": [],
+                        "reasoning": "Concise but sufficient.",
+                    }
+                ),
+                cost_usd=0.0,
+                is_error=False,
+            )
+
+        with patch.object(researcher, "_call_with", side_effect=fake_call):
+            score = researcher._score(
+                "Developer experience",
+                "Developer experience is Python's biggest strength. Trade-off: slower CPU performance."
+            )
+
+        prompt = captured["prompt"]
+        assert "Deliverable Goal" in prompt
+        assert "under 100 words" in prompt.lower()
+        assert "lightweight_mode" in prompt
+        assert score.quality > 0
+
     def test_postprocess_goal_output_enforces_bullets_and_word_limit(self, researcher):
         researcher.config = ResearchConfig(
             topic="What are three pros and cons of Python?",

@@ -290,8 +290,12 @@ def score_research_rubric(
     citations: list[dict[str, Any]],
     evidence_links: list[dict[str, Any]],
     contradictions: list[dict[str, Any]],
+    *,
+    goal: str = "",
+    lightweight_mode: bool = False,
 ) -> dict[str, Any]:
     """Produce a lightweight research-quality rubric from run artifacts."""
+    lightweight = lightweight_mode or _is_lightweight_goal(goal)
     synthesis_claims = [claim for claim in claims if claim.get("scope") == "synthesis"]
     if not synthesis_claims:
         return {
@@ -331,26 +335,41 @@ def score_research_rubric(
         else 0.0
     )
     direct_citation_count = sum(1 for link in synthesis_links if link.get("has_direct_citation"))
-    citation_coverage = direct_citation_count / len(synthesis_claims) if synthesis_claims else 0.0
+    citation_target = max(1, min(len(synthesis_claims), 2 if lightweight else len(synthesis_claims)))
+    citation_coverage = direct_citation_count / citation_target if synthesis_claims else 0.0
     source_types = {citation.get("source_type", "web") for citation in synthesis_citations}
-    source_diversity = min(1.0, len(source_types) / 3) if source_types else 0.0
+    diversity_target = 1 if lightweight else 3
+    source_diversity = min(1.0, len(source_types) / diversity_target) if source_types else 0.0
 
     confidence_labels = [str(claim.get("confidence", "unlabeled")) for claim in synthesis_claims]
     labeled = [label for label in confidence_labels if label != "unlabeled"]
-    uncertainty_reporting = len(labeled) / len(synthesis_claims) if synthesis_claims else 0.0
+    uncertainty_target = max(1, min(len(synthesis_claims), 2 if lightweight else len(synthesis_claims)))
+    uncertainty_reporting = len(labeled) / uncertainty_target if synthesis_claims else 0.0
     recommendation_count = sum(1 for claim in synthesis_claims if claim.get("claim_type") == "recommendation")
-    actionability = recommendation_count / len(synthesis_claims) if synthesis_claims else 0.0
+    actionability_target = max(1, min(len(synthesis_claims), 3 if lightweight else len(synthesis_claims)))
+    actionability = recommendation_count / actionability_target if synthesis_claims else 0.0
     contradiction_handling = max(0.0, 1.0 - min(1.0, len(synthesis_contradictions) / max(1, len(synthesis_claims))))
 
     dimensions = {
         "evidence_quality": round(average_evidence, 2),
-        "citation_coverage": round(citation_coverage, 2),
-        "source_diversity": round(source_diversity, 2),
-        "uncertainty_reporting": round(uncertainty_reporting, 2),
-        "actionability": round(actionability, 2),
+        "citation_coverage": round(min(1.0, citation_coverage), 2),
+        "source_diversity": round(min(1.0, source_diversity), 2),
+        "uncertainty_reporting": round(min(1.0, uncertainty_reporting), 2),
+        "actionability": round(min(1.0, actionability), 2),
         "contradiction_handling": round(contradiction_handling, 2),
     }
-    overall_score = round(sum(dimensions.values()) / len(dimensions), 2)
+    if lightweight:
+        weights = {
+            "evidence_quality": 0.3,
+            "citation_coverage": 0.2,
+            "source_diversity": 0.1,
+            "uncertainty_reporting": 0.1,
+            "actionability": 0.2,
+            "contradiction_handling": 0.1,
+        }
+        overall_score = round(sum(dimensions[key] * weight for key, weight in weights.items()), 2)
+    else:
+        overall_score = round(sum(dimensions.values()) / len(dimensions), 2)
     if overall_score >= 0.8:
         grade = "strong"
     elif overall_score >= 0.6:
@@ -371,8 +390,28 @@ def score_research_rubric(
             "high_confidence_claims": sum(1 for label in confidence_labels if label == "high"),
             "unresolved_claims": sum(1 for label in confidence_labels if label == "unresolved"),
             "recommendation_claims": recommendation_count,
+            "lightweight_mode": lightweight,
         },
     }
+
+
+def _is_lightweight_goal(goal: str) -> bool:
+    """Return True when the goal clearly asks for a short-form deliverable."""
+    lowered = goal.lower()
+    return any(
+        phrase in lowered
+        for phrase in (
+            "under 100 words",
+            "under 150 words",
+            "under 200 words",
+            "bullet-point list",
+            "bullet point list",
+            "brief answer",
+            "short answer",
+            "smoke test",
+            "sanity check",
+        )
+    )
 
 
 def _iter_claim_candidates(text: str) -> list[str]:

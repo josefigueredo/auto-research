@@ -6,9 +6,17 @@ exceptional work.
 
 {topic}
 
+## Deliverable Goal
+
+{goal}
+
 ## Methodology
 
 {methodology}
+
+## Output Constraints
+
+{goal_constraints}
 
 ## Dimension Investigated
 
@@ -23,6 +31,11 @@ exceptional work.
 {knowledge_summary}
 
 ## Scoring Criteria
+
+Evaluate findings relative to the requested deliverable. If `lightweight_mode`
+is `yes` or the goal is explicitly short-form, do NOT penalize the findings for
+not resembling a long formal report. Judge whether they are sufficient,
+accurate, and decision-useful for the requested concise format.
 
 - **depth**: How thoroughly was the dimension explored? Did it go beyond
   surface-level feature lists into implementation details, edge cases,
