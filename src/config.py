@@ -151,6 +151,19 @@ class EvaluationConfig:
 
 
 @dataclass(frozen=True)
+class ReportingConfig:
+    """Optional report rendering settings.
+
+    Attributes:
+        export_html: Whether to emit a human-readable HTML report artifact.
+        report_title: Optional override for the HTML report title.
+    """
+
+    export_html: bool = True
+    report_title: str = ""
+
+
+@dataclass(frozen=True)
 class ExecutionConfig:
     """Runtime parameters for the research loop.
 
@@ -198,6 +211,7 @@ class ResearchConfig:
     dimensions: tuple[str, ...]
     methodology: MethodologyConfig = field(default_factory=MethodologyConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
+    reporting: ReportingConfig = field(default_factory=ReportingConfig)
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
 
@@ -256,6 +270,13 @@ class ResearchConfig:
             expected_dimensions=tuple(evaluation_raw.get("expected_dimensions", [])),
             required_keywords=tuple(evaluation_raw.get("required_keywords", [])),
             reference_runs=tuple(evaluation_raw.get("reference_runs", [])),
+        )
+
+        # --- Reporting --------------------------------------------------------
+        reporting_raw: dict[str, Any] = research.get("reporting", {})
+        reporting = ReportingConfig(
+            export_html=reporting_raw.get("export_html", True),
+            report_title=reporting_raw.get("report_title", ""),
         )
 
         # --- Scoring ----------------------------------------------------------
@@ -367,6 +388,7 @@ class ResearchConfig:
             dimensions=tuple(research.get("dimensions", [])),
             methodology=methodology,
             evaluation=evaluation,
+            reporting=reporting,
             scoring=scoring,
             execution=execution,
         )

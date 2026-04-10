@@ -20,10 +20,11 @@ The project now includes:
   `evidence_links.json`, `evidence_quality.json`, `contradictions.json`)
 - source-quality weighting and evidence-quality scoring
 - optional baseline generation and iterative-vs-baseline comparison artifacts
+- stakeholder-facing HTML report generation (`report.html`)
 
 Test status at the time of this update:
 
-- **223 passing tests**
+- **226 passing tests**
 
 ## The Pattern
 
@@ -281,6 +282,11 @@ The framework now supports an optional `evaluation:` config section:
 - `required_keywords` — keywords you expect to appear in the final research output (overrides bundled benchmark values when set)
 - `reference_runs` — prior output directories to compare against for repeatability and cross-strategy analysis
 
+The framework also supports an optional `reporting:` config section:
+
+- `export_html` — whether to emit `report.html`
+- `report_title` — optional custom title for the rendered HTML report
+
 When enabled, the run emits:
 
 - `baseline.md` — single-pass baseline answer from the synthesis backend
@@ -288,6 +294,7 @@ When enabled, the run emits:
   claim/citation counts, evidence-quality summary, rubric results, bundled benchmark metadata, and benchmark expectation coverage
 - `comparison.json` — overlap metrics versus referenced prior runs (dimensions, citations, claims, score deltas, and consistency level)
 - `rubric.json` — lightweight research-quality rubric across evidence quality, citation coverage, source diversity, uncertainty reporting, actionability, and contradiction handling
+- `report.html` — stakeholder-facing HTML summary that renders run metadata, methods, synthesis, rubric results, and evaluation/comparison summaries
 
 The repository now also supports a lightweight benchmark catalog in `benchmarks/`.
 Each benchmark YAML can define:
@@ -364,9 +371,12 @@ autoresearch/
             citations.json     Extracted URLs with inferred source types
             evidence_links.json Heuristic claim-to-citation links with support labels
             evidence_quality.json Run-level evidence quality summary
+            rubric.json         Research-quality rubric summary
             contradictions.json Potentially conflicting recommendations for review
             baseline.md       Single-pass baseline answer (optional)
             evaluation.json   Iterative-vs-baseline comparison summary (optional)
+            comparison.json   Reference-run consistency summary (optional)
+            report.html       Human-readable HTML report (optional, enabled by default)
 ```
 
 ## Creating a New Research Topic
@@ -773,7 +783,7 @@ uv sync --group dev
 uv run pytest tests/ -v
 ```
 
-223 tests covering all modules (backends, config, scorer, orchestrator, cli, strategy, provenance).
+226 tests covering all modules (backends, config, scorer, orchestrator, cli, strategy, provenance, reporting).
 Each backend has independent tests: `uv run pytest tests/test_backends/test_claude.py`
 
 ## Related Projects

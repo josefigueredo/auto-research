@@ -144,6 +144,26 @@ class TestAutoResearcherSetup:
         assert "# Research Methods" in methods
         assert "Test goal" in methods
 
+    def test_finalize_writes_html_report(self, researcher):
+        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher._setup()
+        synthesis_text = (
+            "Recommend Python for orchestration-heavy workloads. "
+            "High confidence. https://docs.python.org/3/"
+        )
+        researcher.best_score = 87.0
+        researcher.explored_dimensions = ["Developer experience", "Performance"]
+        researcher.synthesis_path.write_text(synthesis_text, encoding="utf-8")
+        researcher._collect_provenance(synthesis_text, scope="synthesis")
+        researcher._finalize_run_artifacts()
+        html = researcher.report_html_path.read_text(encoding="utf-8")
+        assert "Autoresearch Report" in html
+        assert "Developer experience" in html
+        assert "Recommend Python for orchestration-heavy workloads." in html
+        assert "Rubric" in html
+
     def test_resume_empty_dir(self, researcher):
         researcher._setup()
         researcher._resume()

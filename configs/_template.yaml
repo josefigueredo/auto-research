@@ -28,6 +28,10 @@ research:
     required_keywords: []     # Optional keywords expected in the final output; overrides bundled benchmark keywords
     reference_runs: []        # Optional prior output dirs for consistency / cross-strategy comparison
 
+  reporting:
+    export_html: true         # Generate report.html from final run artifacts
+    report_title: ""          # Optional custom title for the HTML report
+
   scoring:
     min_dimensions_per_iteration: 1
     target_dimensions_total: 10   # stop after this many dimensions have been explored

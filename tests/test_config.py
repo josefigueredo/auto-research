@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import BackendsConfig, EvaluationConfig, ExecutionConfig, MethodologyConfig, ResearchConfig, ScoringConfig, StrategyConfig
+from src.config import BackendsConfig, EvaluationConfig, ExecutionConfig, MethodologyConfig, ReportingConfig, ResearchConfig, ScoringConfig, StrategyConfig
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +100,13 @@ class TestEvaluationConfig:
         assert ec.reference_runs == ()
 
 
+class TestReportingConfig:
+    def test_defaults(self):
+        rc = ReportingConfig()
+        assert rc.export_html is True
+        assert rc.report_title == ""
+
+
 # ---------------------------------------------------------------------------
 # ExecutionConfig defaults
 # ---------------------------------------------------------------------------
@@ -191,6 +198,19 @@ class TestResearchConfigFromYaml:
         assert cfg.evaluation.expected_dimensions == ("Cost", "Security")
         assert cfg.evaluation.required_keywords == ("pricing", "latency")
         assert cfg.evaluation.reference_runs == ("output/run-a", "output/run-b")
+
+    def test_reporting_config(self, tmp_path: Path):
+        p = tmp_path / "reporting.yaml"
+        p.write_text(textwrap.dedent("""\
+            research:
+              topic: "Test"
+              reporting:
+                export_html: false
+                report_title: "Custom Research Report"
+        """), encoding="utf-8")
+        cfg = ResearchConfig.from_yaml(p)
+        assert cfg.reporting.export_html is False
+        assert cfg.reporting.report_title == "Custom Research Report"
 
     def test_minimal_config_uses_defaults(self, minimal_yaml: Path):
         cfg = ResearchConfig.from_yaml(minimal_yaml)

@@ -32,6 +32,7 @@ from .provenance import (
     summarize_evidence_quality,
 )
 from .prompts import render as _render
+from .reporting import render_html_report
 from .scorer import (
     IterationScore,
     _MAX_FINDINGS_CHARS,
@@ -103,6 +104,7 @@ class AutoResearcher:
         self.baseline_path = output_dir / "baseline.md"
         self.evaluation_path = output_dir / "evaluation.json"
         self.comparison_path = output_dir / "comparison.json"
+        self.report_html_path = output_dir / "report.html"
 
         # Multi-backend support
         if backends is None:
@@ -913,6 +915,7 @@ class AutoResearcher:
         self._write_run_manifest()
         self._write_metrics()
         self._write_provenance_artifacts()
+        self._write_html_report()
 
     def _write_run_manifest(self) -> None:
         """Write a machine-readable manifest for reproducibility."""
@@ -936,11 +939,15 @@ class AutoResearcher:
                 "name": self.config.execution.strategy,
                 "description": self.strategy.describe(),
             },
-            "evaluation": {
-                "benchmark_id": self.config.evaluation.benchmark_id,
-                "run_baselines": self.config.evaluation.run_baselines,
-            },
-            "environment": {
+              "evaluation": {
+                  "benchmark_id": self.config.evaluation.benchmark_id,
+                  "run_baselines": self.config.evaluation.run_baselines,
+              },
+              "reporting": {
+                  "export_html": self.config.reporting.export_html,
+                  "report_title": self.config.reporting.report_title,
+              },
+              "environment": {
                 "python_version": platform.python_version(),
                 "platform": platform.platform(),
                 "git_commit": self._git_commit(),
@@ -1055,6 +1062,47 @@ class AutoResearcher:
         }
         self.evaluation_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         self.comparison_path.write_text(json.dumps(reference_comparison, indent=2), encoding="utf-8")
+
+    def _write_html_report(self) -> None:
+        """Render a standalone HTML report when enabled."""
+        if not self.config.reporting.export_html:
+            return
+
+        manifest = json.loads(self.manifest_path.read_text(encoding="utf-8")) if self.manifest_path.exists() else {}
+        metrics = json.loads(self.metrics_path.read_text(encoding="utf-8")) if self.metrics_path.exists() else {}
+        evidence_quality = (
+            json.loads(self.evidence_quality_path.read_text(encoding="utf-8"))
+            if self.evidence_quality_path.exists()
+            else {}
+        )
+        rubric = json.loads(self.rubric_path.read_text(encoding="utf-8")) if self.rubric_path.exists() else {}
+        evaluation = (
+            json.loads(self.evaluation_path.read_text(encoding="utf-8"))
+            if self.evaluation_path.exists()
+            else None
+        )
+        comparison = (
+            json.loads(self.comparison_path.read_text(encoding="utf-8"))
+            if self.comparison_path.exists()
+            else None
+        )
+        methods_text = self.methods_path.read_text(encoding="utf-8") if self.methods_path.exists() else ""
+        synthesis_text = self.synthesis_path.read_text(encoding="utf-8") if self.synthesis_path.exists() else ""
+        title = self.config.reporting.report_title or f"Autoresearch Report — {self.config.topic}"
+        html = render_html_report(
+            title=title,
+            topic=self.config.topic,
+            goal=self.config.goal,
+            manifest=manifest,
+            metrics=metrics,
+            evidence_quality=evidence_quality,
+            rubric=rubric,
+            evaluation=evaluation,
+            comparison=comparison,
+            methods_text=methods_text,
+            synthesis_text=synthesis_text,
+        )
+        self.report_html_path.write_text(html, encoding="utf-8")
 
     @staticmethod
     def _normalize_claim_text(text: str) -> str:
