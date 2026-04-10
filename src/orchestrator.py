@@ -821,8 +821,9 @@ class AutoResearcher:
         self._track_usage(resp, synth_backend.name)
 
         if not resp.is_error and resp.text:
-            self.synthesis_path.write_text(resp.text, encoding="utf-8")
-            self._collect_provenance(resp.text, scope="synthesis")
+            final_text = self._postprocess_goal_output(resp.text)
+            self.synthesis_path.write_text(final_text, encoding="utf-8")
+            self._collect_provenance(final_text, scope="synthesis")
             log.info("Synthesis saved to %s", self.synthesis_path)
 
     # -- Helpers -----------------------------------------------------------
@@ -918,6 +919,60 @@ class AutoResearcher:
         if self._is_lightweight_mode():
             lines.append("- Mode: lightweight mode is active; prefer the shortest output that still satisfies the goal.")
         return "\n".join(lines)
+
+    def _goal_word_limit(self) -> int | None:
+        """Return an explicit 'under N words' constraint when present."""
+        match = re.search(r"under\s+(\d+)\s+words?", self.config.goal.lower())
+        return int(match.group(1)) if match else None
+
+    def _goal_requires_bullets(self) -> bool:
+        """Return True when the goal explicitly asks for bullets/list output."""
+        lowered = self.config.goal.lower()
+        return "bullet-point" in lowered or "bullet point" in lowered or "bullet" in lowered or "list" in lowered
+
+    def _postprocess_goal_output(self, text: str) -> str:
+        """Deterministically repair short-form outputs to obey explicit goal constraints."""
+        text = text.strip()
+        if not text:
+            return text
+
+        if self._goal_requires_bullets():
+            text = self._coerce_to_bullets(text)
+
+        word_limit = self._goal_word_limit()
+        if word_limit:
+            text = self._trim_to_word_limit(text, word_limit)
+
+        return text.strip()
+
+    @staticmethod
+    def _trim_to_word_limit(text: str, word_limit: int) -> str:
+        """Trim text while preserving basic bullet structure."""
+        words = text.split()
+        if len(words) <= word_limit:
+            return text
+
+        trimmed = " ".join(words[:word_limit]).rstrip(" ,;:-")
+        bullet_lines = [line for line in trimmed.splitlines() if line.strip()]
+        if bullet_lines and all(line.lstrip().startswith("-") for line in bullet_lines):
+            return "\n".join(line.rstrip() for line in bullet_lines)
+        return trimmed
+
+    @staticmethod
+    def _coerce_to_bullets(text: str) -> str:
+        """Convert paragraphs/sentences into compact bullet lines."""
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        bullets = [line for line in lines if line.startswith(("- ", "* "))]
+        if bullets:
+            return "\n".join("- " + line[2:].strip() if line.startswith("* ") else line for line in bullets)
+
+        cleaned = re.sub(r"^#+\s*", "", text, flags=re.MULTILINE).strip()
+        sentence_parts = re.split(r"(?<=[.!?])\s+", cleaned)
+        compact = [part.strip(" -") for part in sentence_parts if part.strip()]
+        if not compact:
+            compact = [cleaned]
+        compact = compact[:6]
+        return "\n".join(f"- {part}" for part in compact if part)
 
     def _synthesis_knowledge_context(self) -> str:
         """Return the knowledge context to send to synthesis."""
@@ -1139,8 +1194,9 @@ class AutoResearcher:
         resp = self._call_with(baseline_backend, prompt, max_turns=3)
         self._track_usage(resp, baseline_backend.name)
         if not resp.is_error and resp.text:
-            self.baseline_path.write_text(resp.text, encoding="utf-8")
-            self._collect_provenance(resp.text, scope="baseline")
+            final_text = self._postprocess_goal_output(resp.text)
+            self.baseline_path.write_text(final_text, encoding="utf-8")
+            self._collect_provenance(final_text, scope="baseline")
 
     def _write_evaluation_artifact(
         self,

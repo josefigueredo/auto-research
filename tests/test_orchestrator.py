@@ -211,6 +211,56 @@ class TestAutoResearcherSetup:
         assert "| Iter | Dimension | Score | Status |" not in prompt
         assert "- Iter 001: Developer experience" in prompt
 
+    def test_postprocess_goal_output_enforces_bullets_and_word_limit(self, researcher):
+        researcher.config = ResearchConfig(
+            topic="What are three pros and cons of Python?",
+            goal="A bullet-point list in under 20 words",
+            dimensions=("Developer experience",),
+            methodology=researcher.config.methodology,
+            evaluation=researcher.config.evaluation,
+            reporting=researcher.config.reporting,
+            scoring=researcher.config.scoring,
+            execution=researcher.config.execution,
+        )
+        raw = (
+            "# Python Assessment\n\nPython is readable and productive. "
+            "It also has slower CPU performance. Tooling is good."
+        )
+        fixed = researcher._postprocess_goal_output(raw)
+        assert fixed.startswith("- ")
+        assert len(fixed.split()) <= 20
+
+    def test_generate_baseline_postprocesses_short_goal_output(self, researcher):
+        researcher.config = ResearchConfig(
+            topic="What are three pros and cons of Python?",
+            goal="A bullet-point list in under 12 words",
+            dimensions=("Developer experience",),
+            methodology=researcher.config.methodology,
+            evaluation=type(researcher.config.evaluation)(run_baselines=True),
+            reporting=researcher.config.reporting,
+            scoring=researcher.config.scoring,
+            execution=researcher.config.execution,
+        )
+        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher._setup()
+
+        with patch.object(
+            researcher,
+            "_call_with",
+            return_value=AgentResponse(
+                text="Python is readable. Python can be slower on CPU-bound workloads.",
+                cost_usd=0.0,
+                is_error=False,
+            ),
+        ):
+            researcher._generate_baseline()
+
+        baseline = researcher.baseline_path.read_text(encoding="utf-8")
+        assert baseline.startswith("- ")
+        assert len(baseline.split()) <= 12
+
     def test_finalize_writes_html_report(self, researcher):
         with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
              patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
