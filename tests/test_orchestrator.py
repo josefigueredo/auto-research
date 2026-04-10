@@ -283,11 +283,13 @@ class TestAutoResearcherSetup:
         citations = json.loads(researcher.citations_path.read_text(encoding="utf-8"))
         links = json.loads(researcher.evidence_links_path.read_text(encoding="utf-8"))
         evidence_quality = json.loads(researcher.evidence_quality_path.read_text(encoding="utf-8"))
+        rubric = json.loads(researcher.rubric_path.read_text(encoding="utf-8"))
         contradictions = json.loads(researcher.contradictions_path.read_text(encoding="utf-8"))
         assert any(claim["claim_type"] == "recommendation" for claim in claims)
         assert any(citation["url"].startswith("https://docs.python.org") for citation in citations)
         assert len(links) == len(claims)
         assert "average_evidence_quality_score" in evidence_quality
+        assert rubric["grade"] in {"strong", "good", "developing", "insufficient"}
         assert contradictions == []
 
     def test_generate_baseline_and_evaluation_artifacts(self, researcher):
@@ -319,6 +321,8 @@ class TestAutoResearcherSetup:
         evaluation = json.loads(researcher.evaluation_path.read_text(encoding="utf-8"))
         assert evaluation["benchmark_id"] == "bench-001"
         assert evaluation["baseline_generated"] is True
+        assert evaluation["rubric"]["grade"] in {"strong", "good", "developing", "insufficient"}
+        assert evaluation["summary"]["rubric_grade"] == evaluation["rubric"]["grade"]
         assert evaluation["benchmark"]["benchmark_title"] == "Python orchestration smoke benchmark"
         assert evaluation["benchmark"]["all_expectations_satisfied"] is True
 

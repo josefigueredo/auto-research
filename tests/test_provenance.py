@@ -8,6 +8,7 @@ from src.provenance import (
     infer_confidence,
     infer_source_type,
     link_claims_to_citations,
+    score_research_rubric,
     source_quality_weight,
     summarize_evidence_quality,
 )
@@ -85,3 +86,14 @@ def test_summarize_evidence_quality():
     summary = summarize_evidence_quality(claims, links)
     assert "average_evidence_quality_score" in summary
     assert summary["claims_with_direct_citations"] >= 1
+
+
+def test_score_research_rubric():
+    claims = extract_claims(SAMPLE_TEXT, scope="synthesis", dimension="Performance")
+    citations = extract_citations(SAMPLE_TEXT, scope="synthesis", retrieved_at="2026-04-09T00:00:00Z")
+    links = link_claims_to_citations(claims, citations)
+    rubric = score_research_rubric(claims, citations, links, contradictions=[])
+    assert rubric["overall_score"] >= 0.0
+    assert rubric["grade"] in {"strong", "good", "developing", "insufficient"}
+    assert rubric["dimensions"]["citation_coverage"] >= 0.0
+    assert rubric["summary"]["synthesis_claim_count"] == len(claims)

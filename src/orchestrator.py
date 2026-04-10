@@ -28,6 +28,7 @@ from .provenance import (
     extract_citations,
     extract_claims,
     link_claims_to_citations,
+    score_research_rubric,
     summarize_evidence_quality,
 )
 from .prompts import render as _render
@@ -97,6 +98,7 @@ class AutoResearcher:
         self.citations_path = output_dir / "citations.json"
         self.evidence_links_path = output_dir / "evidence_links.json"
         self.evidence_quality_path = output_dir / "evidence_quality.json"
+        self.rubric_path = output_dir / "rubric.json"
         self.contradictions_path = output_dir / "contradictions.json"
         self.baseline_path = output_dir / "baseline.md"
         self.evaluation_path = output_dir / "evaluation.json"
@@ -989,10 +991,12 @@ class AutoResearcher:
         evidence_links = link_claims_to_citations(self._claims, self._citations)
         evidence_quality = summarize_evidence_quality(self._claims, evidence_links)
         contradictions = detect_claim_conflicts(self._claims)
+        rubric = score_research_rubric(self._claims, self._citations, evidence_links, contradictions)
         self.evidence_links_path.write_text(json.dumps(evidence_links, indent=2), encoding="utf-8")
         self.evidence_quality_path.write_text(json.dumps(evidence_quality, indent=2), encoding="utf-8")
+        self.rubric_path.write_text(json.dumps(rubric, indent=2), encoding="utf-8")
         self.contradictions_path.write_text(json.dumps(contradictions, indent=2), encoding="utf-8")
-        self._write_evaluation_artifact(evidence_quality)
+        self._write_evaluation_artifact(evidence_quality, rubric)
 
     def _generate_baseline(self) -> None:
         """Generate an optional single-pass baseline answer for comparison."""
@@ -1010,7 +1014,7 @@ class AutoResearcher:
             self.baseline_path.write_text(resp.text, encoding="utf-8")
             self._collect_provenance(resp.text, scope="baseline")
 
-    def _write_evaluation_artifact(self, evidence_quality: dict[str, Any]) -> None:
+    def _write_evaluation_artifact(self, evidence_quality: dict[str, Any], rubric: dict[str, Any]) -> None:
         """Write optional evaluation summary comparing iterative output to a baseline."""
         if (
             not self.config.evaluation.run_baselines
@@ -1038,6 +1042,7 @@ class AutoResearcher:
                 "citations_count": len(baseline_citations),
             },
             "evidence_quality": evidence_quality,
+            "rubric": rubric,
             "benchmark": benchmark_summary,
             "reference_comparison": reference_comparison,
             "summary": {
@@ -1045,6 +1050,7 @@ class AutoResearcher:
                 "iterative_has_more_citations_than_baseline": len(synthesis_citations) > len(baseline_citations),
                 "benchmark_expectations_satisfied": benchmark_summary.get("all_expectations_satisfied", True),
                 "reference_runs_compared": reference_comparison.get("compared_runs_count", 0),
+                "rubric_grade": rubric.get("grade", "insufficient"),
             },
         }
         self.evaluation_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

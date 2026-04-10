@@ -23,7 +23,7 @@ The project now includes:
 
 Test status at the time of this update:
 
-- **222 passing tests**
+- **223 passing tests**
 
 ## The Pattern
 
@@ -285,8 +285,9 @@ When enabled, the run emits:
 
 - `baseline.md` — single-pass baseline answer from the synthesis backend
 - `evaluation.json` — comparison of iterative synthesis vs baseline, including
-  claim/citation counts, evidence-quality summary, bundled benchmark metadata, and benchmark expectation coverage
+  claim/citation counts, evidence-quality summary, rubric results, bundled benchmark metadata, and benchmark expectation coverage
 - `comparison.json` — overlap metrics versus referenced prior runs (dimensions, citations, claims, score deltas, and consistency level)
+- `rubric.json` — lightweight research-quality rubric across evidence quality, citation coverage, source diversity, uncertainty reporting, actionability, and contradiction handling
 
 The repository now also supports a lightweight benchmark catalog in `benchmarks/`.
 Each benchmark YAML can define:
@@ -772,7 +773,7 @@ uv sync --group dev
 uv run pytest tests/ -v
 ```
 
-222 tests covering all modules (backends, config, scorer, orchestrator, cli, strategy, provenance).
+223 tests covering all modules (backends, config, scorer, orchestrator, cli, strategy, provenance).
 Each backend has independent tests: `uv run pytest tests/test_backends/test_claude.py`
 
 ## Related Projects

@@ -285,6 +285,96 @@ def summarize_evidence_quality(
     }
 
 
+def score_research_rubric(
+    claims: list[dict[str, Any]],
+    citations: list[dict[str, Any]],
+    evidence_links: list[dict[str, Any]],
+    contradictions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Produce a lightweight research-quality rubric from run artifacts."""
+    synthesis_claims = [claim for claim in claims if claim.get("scope") == "synthesis"]
+    if not synthesis_claims:
+        return {
+            "overall_score": 0.0,
+            "grade": "insufficient",
+            "dimensions": {
+                "evidence_quality": 0.0,
+                "citation_coverage": 0.0,
+                "source_diversity": 0.0,
+                "uncertainty_reporting": 0.0,
+                "actionability": 0.0,
+                "contradiction_handling": 1.0 if not contradictions else 0.3,
+            },
+            "summary": {
+                "synthesis_claim_count": 0,
+                "synthesis_citation_count": 0,
+                "contradiction_count": len(contradictions),
+                "high_confidence_claims": 0,
+                "unresolved_claims": 0,
+                "recommendation_claims": 0,
+            },
+        }
+
+    synthesis_claim_ids = {claim["id"] for claim in synthesis_claims}
+    synthesis_citations = [citation for citation in citations if citation.get("scope") == "synthesis"]
+    synthesis_links = [link for link in evidence_links if link.get("claim_id") in synthesis_claim_ids]
+    synthesis_contradictions = [
+        conflict
+        for conflict in contradictions
+        if conflict.get("left_claim_id") in synthesis_claim_ids
+        or conflict.get("right_claim_id") in synthesis_claim_ids
+    ]
+
+    average_evidence = (
+        sum(float(link.get("evidence_quality_score", 0.0)) for link in synthesis_links) / len(synthesis_links)
+        if synthesis_links
+        else 0.0
+    )
+    direct_citation_count = sum(1 for link in synthesis_links if link.get("has_direct_citation"))
+    citation_coverage = direct_citation_count / len(synthesis_claims) if synthesis_claims else 0.0
+    source_types = {citation.get("source_type", "web") for citation in synthesis_citations}
+    source_diversity = min(1.0, len(source_types) / 3) if source_types else 0.0
+
+    confidence_labels = [str(claim.get("confidence", "unlabeled")) for claim in synthesis_claims]
+    labeled = [label for label in confidence_labels if label != "unlabeled"]
+    uncertainty_reporting = len(labeled) / len(synthesis_claims) if synthesis_claims else 0.0
+    recommendation_count = sum(1 for claim in synthesis_claims if claim.get("claim_type") == "recommendation")
+    actionability = recommendation_count / len(synthesis_claims) if synthesis_claims else 0.0
+    contradiction_handling = max(0.0, 1.0 - min(1.0, len(synthesis_contradictions) / max(1, len(synthesis_claims))))
+
+    dimensions = {
+        "evidence_quality": round(average_evidence, 2),
+        "citation_coverage": round(citation_coverage, 2),
+        "source_diversity": round(source_diversity, 2),
+        "uncertainty_reporting": round(uncertainty_reporting, 2),
+        "actionability": round(actionability, 2),
+        "contradiction_handling": round(contradiction_handling, 2),
+    }
+    overall_score = round(sum(dimensions.values()) / len(dimensions), 2)
+    if overall_score >= 0.8:
+        grade = "strong"
+    elif overall_score >= 0.6:
+        grade = "good"
+    elif overall_score >= 0.4:
+        grade = "developing"
+    else:
+        grade = "insufficient"
+
+    return {
+        "overall_score": overall_score,
+        "grade": grade,
+        "dimensions": dimensions,
+        "summary": {
+            "synthesis_claim_count": len(synthesis_claims),
+            "synthesis_citation_count": len(synthesis_citations),
+            "contradiction_count": len(synthesis_contradictions),
+            "high_confidence_claims": sum(1 for label in confidence_labels if label == "high"),
+            "unresolved_claims": sum(1 for label in confidence_labels if label == "unresolved"),
+            "recommendation_claims": recommendation_count,
+        },
+    }
+
+
 def _iter_claim_candidates(text: str) -> list[str]:
     """Return bullet items and sentences as candidate claims."""
     candidates: list[str] = []
