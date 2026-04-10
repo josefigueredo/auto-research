@@ -99,12 +99,14 @@ class TestEvaluationConfig:
         assert ec.required_keywords == ()
         assert ec.reference_runs == ()
         assert ec.semantic_calibration is True
+        assert ec.semantic_review is False
 
 
 class TestReportingConfig:
     def test_defaults(self):
         rc = ReportingConfig()
         assert rc.export_html is True
+        assert rc.export_pdf is False
         assert rc.report_title == ""
 
 
@@ -193,6 +195,7 @@ class TestResearchConfigFromYaml:
                   - "output/run-a"
                   - "output/run-b"
                 semantic_calibration: false
+                semantic_review: true
         """), encoding="utf-8")
         cfg = ResearchConfig.from_yaml(p)
         assert cfg.evaluation.benchmark_id == "bench-001"
@@ -201,6 +204,7 @@ class TestResearchConfigFromYaml:
         assert cfg.evaluation.required_keywords == ("pricing", "latency")
         assert cfg.evaluation.reference_runs == ("output/run-a", "output/run-b")
         assert cfg.evaluation.semantic_calibration is False
+        assert cfg.evaluation.semantic_review is True
 
     def test_reporting_config(self, tmp_path: Path):
         p = tmp_path / "reporting.yaml"
@@ -209,10 +213,12 @@ class TestResearchConfigFromYaml:
               topic: "Test"
               reporting:
                 export_html: false
+                export_pdf: true
                 report_title: "Custom Research Report"
         """), encoding="utf-8")
         cfg = ResearchConfig.from_yaml(p)
         assert cfg.reporting.export_html is False
+        assert cfg.reporting.export_pdf is True
         assert cfg.reporting.report_title == "Custom Research Report"
 
     def test_minimal_config_uses_defaults(self, minimal_yaml: Path):

@@ -166,6 +166,91 @@ class TestAutoResearcherSetup:
         assert "Semantic Calibration" in html
         assert "Dashboard Summary" in html
 
+    def test_finalize_writes_pdf_report(self, researcher):
+        researcher.config = ResearchConfig(
+            topic=researcher.config.topic,
+            goal=researcher.config.goal,
+            dimensions=researcher.config.dimensions,
+            methodology=researcher.config.methodology,
+            evaluation=researcher.config.evaluation,
+            reporting=type(researcher.config.reporting)(export_html=False, export_pdf=True, report_title="PDF Report"),
+            scoring=researcher.config.scoring,
+            execution=researcher.config.execution,
+        )
+        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher._setup()
+        synthesis_text = "Recommend Python for orchestration-heavy workloads. High confidence. https://docs.python.org/3/"
+        researcher.best_score = 87.0
+        researcher.explored_dimensions = ["Developer experience", "Performance"]
+        researcher.synthesis_path.write_text(synthesis_text, encoding="utf-8")
+        researcher._collect_provenance(synthesis_text, scope="synthesis")
+        researcher._finalize_run_artifacts()
+        pdf_bytes = researcher.report_pdf_path.read_bytes()
+        assert pdf_bytes.startswith(b"%PDF-1.4")
+        assert b"PDF Report" in pdf_bytes
+
+    def test_finalize_writes_portfolio_artifacts(self, researcher, tmp_path):
+        sibling = tmp_path / "prior-run"
+        sibling.mkdir()
+        (sibling / "dashboard.json").write_text(
+            json.dumps(
+                {
+                    "topic": "Previous topic",
+                    "benchmark_id": "bench-001",
+                    "current_strategy": "single",
+                    "best_score": 75.0,
+                    "rubric_grade": "good",
+                    "consistency_level": "medium",
+                }
+            ),
+            encoding="utf-8",
+        )
+        researcher.output_dir = tmp_path / "current-run"
+        researcher.iterations_dir = researcher.output_dir / "iterations"
+        researcher.results_path = researcher.output_dir / "results.tsv"
+        researcher.kb_path = researcher.output_dir / "knowledge_base.md"
+        researcher.synthesis_path = researcher.output_dir / "synthesis.md"
+        researcher.methods_path = researcher.output_dir / "methods.md"
+        researcher.manifest_path = researcher.output_dir / "run_manifest.json"
+        researcher.metrics_path = researcher.output_dir / "metrics.json"
+        researcher.claims_path = researcher.output_dir / "claims.json"
+        researcher.citations_path = researcher.output_dir / "citations.json"
+        researcher.evidence_links_path = researcher.output_dir / "evidence_links.json"
+        researcher.evidence_quality_path = researcher.output_dir / "evidence_quality.json"
+        researcher.rubric_path = researcher.output_dir / "rubric.json"
+        researcher.contradictions_path = researcher.output_dir / "contradictions.json"
+        researcher.baseline_path = researcher.output_dir / "baseline.md"
+        researcher.evaluation_path = researcher.output_dir / "evaluation.json"
+        researcher.comparison_path = researcher.output_dir / "comparison.json"
+        researcher.strategy_summary_path = researcher.output_dir / "strategy_summary.json"
+        researcher.dashboard_path = researcher.output_dir / "dashboard.json"
+        researcher.semantic_calibration_path = researcher.output_dir / "semantic_calibration.json"
+        researcher.semantic_review_path = researcher.output_dir / "semantic_review.json"
+        researcher.report_html_path = researcher.output_dir / "report.html"
+        researcher.report_pdf_path = researcher.output_dir / "report.pdf"
+        researcher.portfolio_path = researcher.output_dir.parent / "portfolio.json"
+        researcher.portfolio_html_path = researcher.output_dir.parent / "portfolio.html"
+
+        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher._setup()
+        synthesis_text = "Recommend Python for orchestration-heavy workloads. High confidence. https://docs.python.org/3/"
+        researcher.best_score = 87.0
+        researcher.explored_dimensions = ["Developer experience"]
+        researcher.synthesis_path.write_text(synthesis_text, encoding="utf-8")
+        researcher._collect_provenance(synthesis_text, scope="synthesis")
+        researcher._finalize_run_artifacts()
+
+        portfolio = json.loads(researcher.portfolio_path.read_text(encoding="utf-8"))
+        portfolio_html = researcher.portfolio_html_path.read_text(encoding="utf-8")
+        assert portfolio["runs_count"] == 2
+        assert portfolio["best_run"]["name"] == "current-run"
+        assert "current-run" in portfolio_html
+        assert "prior-run" in portfolio_html
+
     def test_resume_empty_dir(self, researcher):
         researcher._setup()
         researcher._resume()
@@ -383,6 +468,37 @@ class TestAutoResearcherSetup:
         assert evaluation["benchmark"]["matched_keywords"] == ["python", "workloads"]
         assert evaluation["summary"]["benchmark_expectations_satisfied"] is True
 
+    def test_generate_benchmark_evaluation_for_vendor_comparison_catalog(self, researcher):
+        researcher.config = ResearchConfig(
+            topic=researcher.config.topic,
+            goal="Compare and recommend the best option",
+            dimensions=("Cost and pricing", "Operational complexity"),
+            methodology=researcher.config.methodology,
+            evaluation=type(researcher.config.evaluation)(
+                benchmark_id="bench-003",
+                run_baselines=False,
+            ),
+            scoring=researcher.config.scoring,
+            execution=researcher.config.execution,
+        )
+        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher._setup()
+        researcher.explored_dimensions = ["Cost and pricing", "Operational complexity"]
+        researcher.knowledge_base = "Cost and pricing plus operational complexity trade-off and recommendation."
+        researcher.synthesis_path.write_text(
+            "Compare the options and recommend one based on a clear trade-off analysis of cost and pricing and operational complexity.",
+            encoding="utf-8",
+        )
+
+        researcher._finalize_run_artifacts()
+
+        evaluation = json.loads(researcher.evaluation_path.read_text(encoding="utf-8"))
+        assert evaluation["benchmark"]["benchmark_title"] == "Vendor comparison decision benchmark"
+        assert evaluation["benchmark"]["covered_dimensions"] == ["Cost and pricing", "Operational complexity"]
+        assert evaluation["benchmark"]["matched_keywords"] == ["recommendation", "trade-off", "compare"]
+
     def test_generate_reference_run_comparison_artifacts(self, researcher, tmp_path):
         reference_dir = tmp_path / "prior-run"
         reference_dir.mkdir()
@@ -471,6 +587,57 @@ class TestAutoResearcherSetup:
         assert dashboard["strategy_summary"]["best_reference_strategy"] == "ensemble"
         assert semantic_calibration["enabled"] is True
         assert semantic_calibration["grade"] in {"well_calibrated", "reasonable", "tentative", "weak"}
+
+    def test_finalize_writes_semantic_review_when_enabled(self, researcher):
+        researcher.config = ResearchConfig(
+            topic=researcher.config.topic,
+            goal=researcher.config.goal,
+            dimensions=researcher.config.dimensions,
+            methodology=researcher.config.methodology,
+            evaluation=type(researcher.config.evaluation)(semantic_review=True),
+            scoring=researcher.config.scoring,
+            execution=researcher.config.execution,
+        )
+        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher._setup()
+
+        synthesis_text = "Recommend Python. High confidence. https://docs.python.org/3/"
+        researcher.synthesis_path.write_text(synthesis_text, encoding="utf-8")
+        researcher._collect_provenance(synthesis_text, scope="synthesis")
+
+        def fake_call(backend, prompt, **kwargs):
+            if "semantic quality judge" in prompt.lower():
+                return AgentResponse(
+                    text=json.dumps(
+                        {
+                            "dimensions": {
+                                "coherence": 0.8,
+                                "support": 0.7,
+                                "limitations": 0.6,
+                                "contradiction_handling": 0.9,
+                                "decision_readiness": 0.75,
+                            },
+                            "grade": "good",
+                            "summary": "Decision-ready with minor gaps.",
+                        }
+                    ),
+                    cost_usd=0.0,
+                    is_error=False,
+                )
+            return AgentResponse(text="noop", cost_usd=0.0, is_error=False)
+
+        with patch.object(researcher, "_call_with", side_effect=fake_call):
+            researcher._finalize_run_artifacts()
+
+        semantic_review = json.loads(researcher.semantic_review_path.read_text(encoding="utf-8"))
+        evaluation = json.loads(researcher.evaluation_path.read_text(encoding="utf-8"))
+        assert semantic_review["enabled"] is True
+        assert semantic_review["grade"] == "good"
+        assert semantic_review["judge_backend"] == researcher.strategy.get_judge_backend().name
+        assert evaluation["semantic_review"]["grade"] == "good"
+        assert evaluation["summary"]["semantic_review_grade"] == "good"
 
 
 # ---------------------------------------------------------------------------

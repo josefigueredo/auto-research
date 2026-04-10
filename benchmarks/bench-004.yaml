@@ -1,0 +1,12 @@
+benchmark_id: bench-004
+title: Compliance methodology benchmark
+description: >
+  Validates that the report treats compliance-sensitive topics with explicit
+  scope boundaries, limitations, and confidence-aware language.
+expected_dimensions:
+  - Security
+  - Compliance and governance
+required_keywords:
+  - limitation
+  - confidence
+  - compliance

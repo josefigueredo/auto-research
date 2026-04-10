@@ -1,0 +1,12 @@
+benchmark_id: bench-003
+title: Vendor comparison decision benchmark
+description: >
+  Checks whether a comparison-oriented synthesis includes explicit trade-offs,
+  recommendations, and evidence of decision framing across vendor options.
+expected_dimensions:
+  - Cost and pricing
+  - Operational complexity
+required_keywords:
+  - recommendation
+  - trade-off
+  - compare

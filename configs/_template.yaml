@@ -28,9 +28,11 @@ research:
     required_keywords: []     # Optional keywords expected in the final output; overrides bundled benchmark keywords
     reference_runs: []        # Optional prior output dirs for consistency / cross-strategy comparison
     semantic_calibration: true # Generate semantic_calibration.json and include it in evaluation/reporting
+    semantic_review: false     # Optional final judge pass over synthesis; writes semantic_review.json
 
   reporting:
     export_html: true         # Generate report.html from final run artifacts
+    export_pdf: false         # Generate report.pdf from final run artifacts
     report_title: ""          # Optional custom title for the HTML report
 
   scoring:

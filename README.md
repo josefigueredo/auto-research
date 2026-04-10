@@ -20,11 +20,13 @@ The project now includes:
   `evidence_links.json`, `evidence_quality.json`, `contradictions.json`)
 - source-quality weighting and evidence-quality scoring
 - optional baseline generation and iterative-vs-baseline comparison artifacts
-- stakeholder-facing HTML report generation (`report.html`)
+- optional semantic judge review (`semantic_review.json`)
+- stakeholder-facing HTML and PDF report generation (`report.html`, `report.pdf`)
+- portfolio-level aggregation across runs (`portfolio.json`, `portfolio.html`)
 
 Test status at the time of this update:
 
-- **230 passing tests**
+- **241 passing tests**
 
 ## The Pattern
 
@@ -282,10 +284,12 @@ The framework now supports an optional `evaluation:` config section:
 - `required_keywords` — keywords you expect to appear in the final research output (overrides bundled benchmark values when set)
 - `reference_runs` — prior output directories to compare against for repeatability and cross-strategy analysis
 - `semantic_calibration` — whether to generate a calibrated semantic quality score (enabled by default)
+- `semantic_review` — whether to run an optional final judge pass over the synthesis output
 
 The framework also supports an optional `reporting:` config section:
 
 - `export_html` — whether to emit `report.html`
+- `export_pdf` — whether to emit `report.pdf`
 - `report_title` — optional custom title for the rendered HTML report
 
 When enabled, the run emits:
@@ -296,13 +300,18 @@ When enabled, the run emits:
 - `comparison.json` — overlap metrics versus referenced prior runs (dimensions, citations, claims, score deltas, and consistency level)
 - `strategy_summary.json` — strategy-level rollups from referenced runs (average score, overlap, and best reference strategy)
 - `rubric.json` — lightweight research-quality rubric across evidence quality, citation coverage, source diversity, uncertainty reporting, actionability, and contradiction handling
+- `semantic_review.json` — optional final judge review over the synthesized report, including decision-readiness and limitations scoring
 - `semantic_calibration.json` — calibrated quality score combining rubric, evidence quality, benchmark coverage, consistency, uncertainty reporting, and contradiction handling
 - `dashboard.json` — compact stakeholder summary of benchmark/strategy/rubric status
-- `report.html` — stakeholder-facing HTML summary that renders run metadata, methods, synthesis, rubric results, and evaluation/comparison summaries
+- `report.html` — stakeholder-facing HTML summary that renders run metadata, methods, synthesis, rubric results, semantic review, and evaluation/comparison summaries
+- `report.pdf` — lightweight PDF export derived from final run artifacts
+- `portfolio.json` / `portfolio.html` — aggregate summary across sibling run folders for quick portfolio-style review
 
-The HTML report renderer now uses a filesystem template (`src/templates/report.html.tmpl`)
-instead of embedding the full document directly in Python code, making report
-presentation easier to maintain and customize.
+The HTML report renderer now uses filesystem templates and CSS assets
+(`src/templates/report.html.tmpl`, `src/templates/report.css`,
+`src/templates/report_print.css`, and `src/templates/partials/`) instead of
+embedding the full document directly in Python code, making report
+presentation easier to maintain, print, and customize.
 
 The repository now also supports a lightweight benchmark catalog in `benchmarks/`.
 Each benchmark YAML can define:
@@ -313,7 +322,7 @@ Each benchmark YAML can define:
 - `expected_dimensions`
 - `required_keywords`
 
-This lets you keep reusable task expectations in version control instead of duplicating them in each config.
+This lets you keep reusable task expectations in version control instead of duplicating them in each config. See `benchmarks/README.md` for the bundled catalog and naming conventions.
 
 ## Requirements
 
@@ -335,10 +344,15 @@ autoresearch/
         scorer.py           Heuristic scoring + LLM-as-judge
         strategy.py         Multi-backend strategies (ensemble, adversarial, serial, etc.)
         provenance.py       Claim/citation extraction, evidence links, contradiction checks
-        reporting.py        HTML report renderer + template view-model assembly
+        reporting.py        HTML report renderer + template/CSS view-model assembly
+        pdf_report.py       Lightweight PDF renderer for artifact-based exports
+        portfolio.py        Portfolio aggregation across sibling run directories
         prompts.py          Prompt template loading and rendering
         templates/
             report.html.tmpl HTML report template
+            report.css      Main stylesheet for report.html
+            report_print.css Print stylesheet for report.html
+            partials/       Shared template fragments
         backends/
             __init__.py     Re-exports all public symbols
             types.py        PromptMode, CallOptions, AgentResponse, BackendCapabilities
@@ -358,6 +372,7 @@ autoresearch/
         hypothesis.md       Picks next dimension to explore (returns JSON)
         research.md         Deep research with web search tools
         evaluate.md         LLM judge: depth, accuracy, novelty, actionability
+        semantic_judge.md   Optional final semantic judge pass over synthesis
         synthesize.md       Final report generation
         critique.md         Adversarial critique of findings
         refine.md           Serial refinement of draft findings
@@ -384,6 +399,7 @@ autoresearch/
             evidence_links.json Heuristic claim-to-citation links with support labels
             evidence_quality.json Run-level evidence quality summary
             rubric.json         Research-quality rubric summary
+            semantic_review.json Optional final judge review of synthesis
             semantic_calibration.json Calibrated semantic quality summary
             contradictions.json Potentially conflicting recommendations for review
             baseline.md       Single-pass baseline answer (optional)
@@ -392,6 +408,9 @@ autoresearch/
             strategy_summary.json Strategy-level rollup from reference runs (optional)
             dashboard.json    Executive summary artifact (optional)
             report.html       Human-readable HTML report (optional, enabled by default)
+            report.pdf        Human-readable PDF report (optional)
+        portfolio.json       Cross-run portfolio summary (optional)
+        portfolio.html       Human-readable cross-run portfolio dashboard (optional)
 ```
 
 ## Creating a New Research Topic

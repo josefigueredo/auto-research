@@ -142,6 +142,7 @@ class EvaluationConfig:
         required_keywords: Optional benchmark keywords expected in the synthesis.
         reference_runs: Optional prior output directories for consistency / strategy comparison.
         semantic_calibration: Whether to derive a calibrated semantic quality score.
+        semantic_review: Whether to run an optional final semantic judge pass over synthesis.
     """
 
     benchmark_id: str = ""
@@ -150,6 +151,7 @@ class EvaluationConfig:
     required_keywords: tuple[str, ...] = ()
     reference_runs: tuple[str, ...] = ()
     semantic_calibration: bool = True
+    semantic_review: bool = False
 
 
 @dataclass(frozen=True)
@@ -158,10 +160,12 @@ class ReportingConfig:
 
     Attributes:
         export_html: Whether to emit a human-readable HTML report artifact.
+        export_pdf: Whether to emit a human-readable PDF report artifact.
         report_title: Optional override for the HTML report title.
     """
 
     export_html: bool = True
+    export_pdf: bool = False
     report_title: str = ""
 
 
@@ -273,12 +277,14 @@ class ResearchConfig:
             required_keywords=tuple(evaluation_raw.get("required_keywords", [])),
             reference_runs=tuple(evaluation_raw.get("reference_runs", [])),
             semantic_calibration=evaluation_raw.get("semantic_calibration", True),
+            semantic_review=evaluation_raw.get("semantic_review", False),
         )
 
         # --- Reporting --------------------------------------------------------
         reporting_raw: dict[str, Any] = research.get("reporting", {})
         reporting = ReportingConfig(
             export_html=reporting_raw.get("export_html", True),
+            export_pdf=reporting_raw.get("export_pdf", False),
             report_title=reporting_raw.get("report_title", ""),
         )
 

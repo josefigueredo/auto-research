@@ -32,6 +32,8 @@ from .provenance import (
     summarize_evidence_quality,
 )
 from .prompts import render as _render
+from .pdf_report import render_simple_pdf
+from .portfolio import build_portfolio, render_portfolio_html
 from .reporting import render_html_report
 from .scorer import (
     IterationScore,
@@ -107,7 +109,11 @@ class AutoResearcher:
         self.strategy_summary_path = output_dir / "strategy_summary.json"
         self.dashboard_path = output_dir / "dashboard.json"
         self.semantic_calibration_path = output_dir / "semantic_calibration.json"
+        self.semantic_review_path = output_dir / "semantic_review.json"
         self.report_html_path = output_dir / "report.html"
+        self.report_pdf_path = output_dir / "report.pdf"
+        self.portfolio_path = output_dir.parent / "portfolio.json"
+        self.portfolio_html_path = output_dir.parent / "portfolio.html"
 
         # Multi-backend support
         if backends is None:
@@ -920,6 +926,8 @@ class AutoResearcher:
         self._write_provenance_artifacts()
         self._write_dashboard_artifact()
         self._write_html_report()
+        self._write_pdf_report()
+        self._write_portfolio_artifacts()
 
     def _write_run_manifest(self) -> None:
         """Write a machine-readable manifest for reproducibility."""
@@ -946,9 +954,11 @@ class AutoResearcher:
               "evaluation": {
                   "benchmark_id": self.config.evaluation.benchmark_id,
                   "run_baselines": self.config.evaluation.run_baselines,
+                  "semantic_review": self.config.evaluation.semantic_review,
               },
               "reporting": {
                   "export_html": self.config.reporting.export_html,
+                  "export_pdf": self.config.reporting.export_pdf,
                   "report_title": self.config.reporting.report_title,
               },
               "environment": {
@@ -1005,6 +1015,12 @@ class AutoResearcher:
         rubric = score_research_rubric(self._claims, self._citations, evidence_links, contradictions)
         benchmark_summary = self._benchmark_summary()
         reference_comparison = self._reference_run_comparison()
+        semantic_review = self._semantic_review(
+            rubric=rubric,
+            evidence_quality=evidence_quality,
+            benchmark_summary=benchmark_summary,
+            contradictions=contradictions,
+        )
         semantic_calibration = self._semantic_calibration(
             rubric=rubric,
             evidence_quality=evidence_quality,
@@ -1015,6 +1031,7 @@ class AutoResearcher:
         self.evidence_quality_path.write_text(json.dumps(evidence_quality, indent=2), encoding="utf-8")
         self.rubric_path.write_text(json.dumps(rubric, indent=2), encoding="utf-8")
         self.contradictions_path.write_text(json.dumps(contradictions, indent=2), encoding="utf-8")
+        self.semantic_review_path.write_text(json.dumps(semantic_review, indent=2), encoding="utf-8")
         self.semantic_calibration_path.write_text(
             json.dumps(semantic_calibration, indent=2),
             encoding="utf-8",
@@ -1024,6 +1041,7 @@ class AutoResearcher:
             rubric,
             benchmark_summary=benchmark_summary,
             reference_comparison=reference_comparison,
+            semantic_review=semantic_review,
             semantic_calibration=semantic_calibration,
         )
 
@@ -1050,6 +1068,7 @@ class AutoResearcher:
         *,
         benchmark_summary: dict[str, Any],
         reference_comparison: dict[str, Any],
+        semantic_review: dict[str, Any],
         semantic_calibration: dict[str, Any],
     ) -> None:
         """Write optional evaluation summary comparing iterative output to a baseline."""
@@ -1057,6 +1076,7 @@ class AutoResearcher:
             not self.config.evaluation.run_baselines
             and not self.config.evaluation.benchmark_id
             and not self.config.evaluation.reference_runs
+            and not self.config.evaluation.semantic_review
         ):
             return
 
@@ -1079,6 +1099,7 @@ class AutoResearcher:
             "rubric": rubric,
             "benchmark": benchmark_summary,
             "reference_comparison": reference_comparison,
+            "semantic_review": semantic_review,
             "semantic_calibration": semantic_calibration,
             "summary": {
                 "iterative_has_more_claims_than_baseline": len(synthesis_claims) > len(baseline_claims),
@@ -1086,6 +1107,7 @@ class AutoResearcher:
                 "benchmark_expectations_satisfied": benchmark_summary.get("all_expectations_satisfied", True),
                 "reference_runs_compared": reference_comparison.get("compared_runs_count", 0),
                 "rubric_grade": rubric.get("grade", "insufficient"),
+                "semantic_review_grade": semantic_review.get("grade", "disabled"),
                 "semantic_calibration_grade": semantic_calibration.get("grade", "disabled"),
             },
         }
@@ -1124,6 +1146,11 @@ class AutoResearcher:
             if self.semantic_calibration_path.exists()
             else None
         )
+        semantic_review = (
+            json.loads(self.semantic_review_path.read_text(encoding="utf-8"))
+            if self.semantic_review_path.exists()
+            else None
+        )
         dashboard = (
             json.loads(self.dashboard_path.read_text(encoding="utf-8"))
             if self.dashboard_path.exists()
@@ -1143,11 +1170,64 @@ class AutoResearcher:
             evaluation=evaluation,
             comparison=comparison,
             semantic_calibration=semantic_calibration,
+            semantic_review=semantic_review,
             dashboard=dashboard,
             methods_text=methods_text,
             synthesis_text=synthesis_text,
         )
         self.report_html_path.write_text(html, encoding="utf-8")
+
+    def _write_pdf_report(self) -> None:
+        """Render a simple PDF report when enabled."""
+        if not self.config.reporting.export_pdf:
+            return
+
+        title = self.config.reporting.report_title or f"Autoresearch Report — {self.config.topic}"
+        metrics = json.loads(self.metrics_path.read_text(encoding="utf-8")) if self.metrics_path.exists() else {}
+        rubric = json.loads(self.rubric_path.read_text(encoding="utf-8")) if self.rubric_path.exists() else {}
+        evidence_quality = (
+            json.loads(self.evidence_quality_path.read_text(encoding="utf-8"))
+            if self.evidence_quality_path.exists()
+            else {}
+        )
+        evaluation = (
+            json.loads(self.evaluation_path.read_text(encoding="utf-8"))
+            if self.evaluation_path.exists()
+            else {}
+        )
+        dashboard = (
+            json.loads(self.dashboard_path.read_text(encoding="utf-8"))
+            if self.dashboard_path.exists()
+            else {}
+        )
+        methods_text = self.methods_path.read_text(encoding="utf-8") if self.methods_path.exists() else ""
+        synthesis_text = self.synthesis_path.read_text(encoding="utf-8") if self.synthesis_path.exists() else ""
+        sections = [
+            ("Run Summary", self._pdf_run_summary_text(metrics, rubric, evidence_quality)),
+            ("Methods", methods_text),
+            ("Synthesis", synthesis_text),
+            ("Dashboard", json.dumps(dashboard, indent=2)),
+            ("Evaluation", json.dumps(evaluation, indent=2)),
+        ]
+        self.report_pdf_path.write_bytes(render_simple_pdf(title, sections))
+
+    def _pdf_run_summary_text(
+        self,
+        metrics: dict[str, Any],
+        rubric: dict[str, Any],
+        evidence_quality: dict[str, Any],
+    ) -> str:
+        """Format core run summary text for PDF export."""
+        return (
+            f"Topic: {self.config.topic}\n"
+            f"Goal: {self.config.goal}\n"
+            f"Strategy: {self.config.execution.strategy}\n"
+            f"Best score: {metrics.get('best_score', self.best_score)}\n"
+            f"Iterations: {metrics.get('iterations', self.iteration)}\n"
+            f"Rubric grade: {rubric.get('grade', 'insufficient')}\n"
+            f"Evidence quality: {evidence_quality.get('average_evidence_quality_score', 0.0)}\n"
+            f"Explored dimensions: {', '.join(metrics.get('explored_dimensions', self.explored_dimensions)) or '(none)'}\n"
+        )
 
     def _write_dashboard_artifact(self) -> None:
         """Write a stakeholder-friendly summary dashboard artifact."""
@@ -1196,8 +1276,132 @@ class AutoResearcher:
                 if self.semantic_calibration_path.exists()
                 else {}
             ),
+            "semantic_review": (
+                json.loads(self.semantic_review_path.read_text(encoding="utf-8"))
+                if self.semantic_review_path.exists()
+                else {}
+            ),
         }
         self.dashboard_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def _write_portfolio_artifacts(self) -> None:
+        """Aggregate sibling run dashboards into a portfolio summary."""
+        output_root = self.output_dir.parent
+        if not output_root.exists():
+            return
+        portfolio = build_portfolio(output_root)
+        self.portfolio_path.write_text(json.dumps(portfolio, indent=2), encoding="utf-8")
+        self.portfolio_html_path.write_text(
+            render_portfolio_html("Autoresearch Portfolio", portfolio),
+            encoding="utf-8",
+        )
+
+    def _semantic_review(
+        self,
+        *,
+        rubric: dict[str, Any],
+        evidence_quality: dict[str, Any],
+        benchmark_summary: dict[str, Any],
+        contradictions: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Optionally run a final judge pass over the synthesized report."""
+        if not self.config.evaluation.semantic_review:
+            return {
+                "enabled": False,
+                "overall_score": 0.0,
+                "grade": "disabled",
+                "judge_backend": "",
+                "dimensions": {},
+                "summary": "",
+            }
+
+        synthesis_text = self.synthesis_path.read_text(encoding="utf-8") if self.synthesis_path.exists() else ""
+        if not synthesis_text.strip():
+            return {
+                "enabled": True,
+                "overall_score": 0.0,
+                "grade": "weak",
+                "judge_backend": self.strategy.get_judge_backend().name,
+                "dimensions": {
+                    "coherence": 0.0,
+                    "support": 0.0,
+                    "limitations": 0.0,
+                    "contradiction_handling": 0.0,
+                    "decision_readiness": 0.0,
+                },
+                "summary": "No synthesis was available for semantic review.",
+                "raw_response": "",
+            }
+
+        prompt = _render(
+            "semantic_judge.md",
+            topic=self.config.topic,
+            methodology=self._methodology_summary(),
+            synthesis=synthesis_text,
+            rubric=json.dumps(rubric, indent=2),
+            evidence_quality=json.dumps(evidence_quality, indent=2),
+            benchmark_summary=json.dumps(benchmark_summary, indent=2),
+            contradictions=json.dumps(contradictions, indent=2),
+        )
+        judge_backend = self.strategy.get_judge_backend()
+        resp = self._call_with(judge_backend, prompt, max_turns=3)
+        self._track_usage(resp, judge_backend.name)
+
+        fallback = {
+            "enabled": True,
+            "judge_backend": judge_backend.name,
+            "overall_score": float(rubric.get("overall_score", 0.0)),
+            "grade": rubric.get("grade", "developing"),
+            "dimensions": {
+                "coherence": float(rubric.get("dimensions", {}).get("actionability", 0.0)),
+                "support": float(evidence_quality.get("average_evidence_quality_score", 0.0)),
+                "limitations": float(rubric.get("dimensions", {}).get("uncertainty_reporting", 0.0)),
+                "contradiction_handling": float(
+                    rubric.get("dimensions", {}).get("contradiction_handling", 0.0)
+                ),
+                "decision_readiness": float(rubric.get("dimensions", {}).get("actionability", 0.0)),
+            },
+            "summary": "Fallback semantic review derived from rubric and evidence quality.",
+            "raw_response": resp.text,
+        }
+
+        if resp.is_error or not resp.text:
+            return fallback
+        try:
+            payload = json.loads(resp.text)
+        except json.JSONDecodeError:
+            return fallback
+
+        dimensions = payload.get("dimensions", {})
+        dimension_scores = [
+            float(dimensions.get(key, 0.0))
+            for key in ("coherence", "support", "limitations", "contradiction_handling", "decision_readiness")
+        ]
+        overall_score = round(sum(dimension_scores) / len(dimension_scores), 2) if dimension_scores else 0.0
+        grade = payload.get("grade") or (
+            "strong"
+            if overall_score >= 0.8
+            else "good"
+            if overall_score >= 0.6
+            else "developing"
+            if overall_score >= 0.4
+            else "weak"
+        )
+        return {
+            "enabled": True,
+            "judge_backend": judge_backend.name,
+            "overall_score": overall_score,
+            "grade": grade,
+            "dimensions": {
+                "coherence": float(dimensions.get("coherence", 0.0)),
+                "support": float(dimensions.get("support", 0.0)),
+                "limitations": float(dimensions.get("limitations", 0.0)),
+                "contradiction_handling": float(dimensions.get("contradiction_handling", 0.0)),
+                "decision_readiness": float(dimensions.get("decision_readiness", 0.0)),
+            },
+            "summary": payload.get("summary", ""),
+            "raw_response": resp.text,
+        }
 
     def _semantic_calibration(
         self,
@@ -1213,6 +1417,8 @@ class AutoResearcher:
                 "enabled": False,
                 "calibrated_score": 0.0,
                 "grade": "disabled",
+                "profile": "disabled",
+                "weights": {},
                 "components": {},
             }
 
@@ -1238,14 +1444,20 @@ class AutoResearcher:
         ) if reference_comparison.get("compared_runs_count", 0) else 0.5
         uncertainty_score = float(rubric.get("dimensions", {}).get("uncertainty_reporting", 0.0))
         contradiction_score = float(rubric.get("dimensions", {}).get("contradiction_handling", 1.0))
+        actionability_score = float(rubric.get("dimensions", {}).get("actionability", 0.0))
+        profile, weights = self._semantic_weight_profile(
+            benchmark_summary=benchmark_summary,
+            reference_comparison=reference_comparison,
+        )
 
         calibrated_score = round(
-            rubric_score * 0.4
-            + evidence_score * 0.2
-            + benchmark_score * 0.2
-            + consistency_score * 0.1
-            + uncertainty_score * 0.05
-            + contradiction_score * 0.05,
+            rubric_score * weights["rubric_score"]
+            + evidence_score * weights["evidence_score"]
+            + benchmark_score * weights["benchmark_score"]
+            + consistency_score * weights["consistency_score"]
+            + uncertainty_score * weights["uncertainty_score"]
+            + contradiction_score * weights["contradiction_score"]
+            + actionability_score * weights["actionability_score"],
             2,
         )
 
@@ -1262,6 +1474,8 @@ class AutoResearcher:
             "enabled": True,
             "calibrated_score": calibrated_score,
             "grade": grade,
+            "profile": profile,
+            "weights": weights,
             "components": {
                 "rubric_score": rubric_score,
                 "evidence_score": evidence_score,
@@ -1269,8 +1483,73 @@ class AutoResearcher:
                 "consistency_score": consistency_score,
                 "uncertainty_score": uncertainty_score,
                 "contradiction_score": contradiction_score,
+                "actionability_score": actionability_score,
             },
         }
+
+    def _semantic_weight_profile(
+        self,
+        *,
+        benchmark_summary: dict[str, Any],
+        reference_comparison: dict[str, Any],
+    ) -> tuple[str, dict[str, float]]:
+        """Choose semantic calibration weights based on task shape and available signals."""
+        methodology_text = (
+            f"{self.config.goal} {self.config.methodology.question} {self.config.methodology.scope}"
+        ).lower()
+        has_benchmark = bool(
+            self.config.evaluation.benchmark_id
+            or benchmark_summary.get("expected_dimensions")
+            or benchmark_summary.get("required_keywords")
+        )
+        has_references = bool(reference_comparison.get("compared_runs_count", 0))
+        comparison_oriented = any(
+            term in methodology_text for term in ("compare", "comparison", "evaluate", "vendor", "benchmark")
+        )
+        decision_oriented = any(
+            term in methodology_text for term in ("decision", "recommend", "adr", "adopt", "choose")
+        )
+
+        weights = {
+            "rubric_score": 0.35,
+            "evidence_score": 0.2,
+            "benchmark_score": 0.15,
+            "consistency_score": 0.1,
+            "uncertainty_score": 0.05,
+            "contradiction_score": 0.05,
+            "actionability_score": 0.1,
+        }
+        profile = "balanced"
+
+        if comparison_oriented or has_benchmark:
+            weights.update(
+                {
+                    "rubric_score": 0.3,
+                    "evidence_score": 0.2,
+                    "benchmark_score": 0.25,
+                    "consistency_score": 0.1 if has_references else 0.05,
+                    "uncertainty_score": 0.05,
+                    "contradiction_score": 0.05,
+                    "actionability_score": 0.05,
+                }
+            )
+            profile = "benchmark_weighted"
+
+        if has_references:
+            weights["consistency_score"] += 0.05
+            weights["rubric_score"] -= 0.03
+            weights["actionability_score"] -= 0.02
+            profile = "consistency_weighted" if profile == "balanced" else f"{profile}+consistency"
+
+        if decision_oriented:
+            weights["actionability_score"] += 0.05
+            weights["rubric_score"] -= 0.03
+            weights["benchmark_score"] -= 0.02
+            profile = "decision_weighted" if profile == "balanced" else f"{profile}+decision"
+
+        total = sum(weights.values())
+        normalized = {key: round(value / total, 4) for key, value in weights.items()}
+        return profile, normalized
 
     @staticmethod
     def _normalize_claim_text(text: str) -> str:

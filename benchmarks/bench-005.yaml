@@ -1,0 +1,12 @@
+benchmark_id: bench-005
+title: Performance architecture benchmark
+description: >
+  Evaluates whether a performance-oriented synthesis addresses architecture,
+  workload suitability, and measurable trade-offs.
+expected_dimensions:
+  - Performance and scalability
+  - Architecture fit
+required_keywords:
+  - latency
+  - throughput
+  - architecture

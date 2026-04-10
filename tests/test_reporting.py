@@ -7,6 +7,7 @@ from src.reporting import (
     _evaluation_html,
     _pretty_json_like,
     _semantic_html,
+    _semantic_review_html,
     _summary_cards_html,
     render_html_report,
 )
@@ -33,6 +34,7 @@ def test_render_html_report_renders_core_sections_and_escapes():
         evaluation={"benchmark_id": "bench-001", "summary": {"rubric_grade": "strong"}},
         comparison={"compared_runs_count": 1, "summary": {"consistency_level": "high"}},
         semantic_calibration={"enabled": True, "grade": "reasonable", "calibrated_score": 0.81},
+        semantic_review={"enabled": True, "grade": "good", "overall_score": 0.76, "judge_backend": "claude"},
         dashboard={"current_strategy": "ensemble"},
         methods_text="Method <1>",
         synthesis_text="Use <Python> & cite sources.",
@@ -43,6 +45,7 @@ def test_render_html_report_renders_core_sections_and_escapes():
     assert "Goal &gt; Outcome" in html
     assert "Run Summary" in html
     assert "Semantic Calibration" in html
+    assert "Semantic Judge Review" in html
     assert "Dashboard Summary" in html
     assert "Consistency Comparison" in html
     assert "Method &lt;1&gt;" in html
@@ -61,6 +64,7 @@ def test_render_html_report_omits_optional_sections_when_empty():
         evaluation=None,
         comparison=None,
         semantic_calibration=None,
+        semantic_review=None,
         dashboard=None,
         methods_text="Methods",
         synthesis_text="Synthesis",
@@ -68,6 +72,7 @@ def test_render_html_report_omits_optional_sections_when_empty():
 
     assert "Semantic Calibration" not in html
     assert "Dashboard Summary" not in html
+    assert "Semantic Judge Review" not in html
     assert "Consistency Comparison" not in html
     assert "Evaluation" not in html
     assert "<li>(none)</li>" in html
@@ -82,6 +87,10 @@ def test_helper_html_sections_behave_as_expected():
     assert _evaluation_html(None) == ""
     assert "Calibrated score:" in _semantic_html({"enabled": True, "grade": "reasonable", "calibrated_score": 0.7})
     assert _semantic_html({"enabled": False}) == ""
+    assert "Overall score:" in _semantic_review_html(
+        {"enabled": True, "grade": "good", "overall_score": 0.74, "judge_backend": "claude"}
+    )
+    assert _semantic_review_html({"enabled": False}) == ""
 
 
 def test_helper_formatters_cover_lists_cards_and_json_like():

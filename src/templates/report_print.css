@@ -1,0 +1,4 @@
+body { max-width: none; margin: 0.5in; font-size: 11pt; }
+.card { break-inside: avoid; }
+pre, section, table { break-inside: avoid; }
+@page { margin: 0.5in; }
