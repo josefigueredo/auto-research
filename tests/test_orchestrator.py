@@ -163,6 +163,8 @@ class TestAutoResearcherSetup:
         assert "Developer experience" in html
         assert "Recommend Python for orchestration-heavy workloads." in html
         assert "Rubric" in html
+        assert "Semantic Calibration" in html
+        assert "Dashboard Summary" in html
 
     def test_resume_empty_dir(self, researcher):
         researcher._setup()
@@ -343,6 +345,8 @@ class TestAutoResearcherSetup:
         assert evaluation["baseline_generated"] is True
         assert evaluation["rubric"]["grade"] in {"strong", "good", "developing", "insufficient"}
         assert evaluation["summary"]["rubric_grade"] == evaluation["rubric"]["grade"]
+        assert evaluation["semantic_calibration"]["grade"] in {"well_calibrated", "reasonable", "tentative", "weak"}
+        assert evaluation["summary"]["semantic_calibration_grade"] == evaluation["semantic_calibration"]["grade"]
         assert evaluation["benchmark"]["benchmark_title"] == "Python orchestration smoke benchmark"
         assert evaluation["benchmark"]["all_expectations_satisfied"] is True
 
@@ -450,12 +454,23 @@ class TestAutoResearcherSetup:
 
         evaluation = json.loads(researcher.evaluation_path.read_text(encoding="utf-8"))
         comparison = json.loads(researcher.comparison_path.read_text(encoding="utf-8"))
+        strategy_summary = json.loads(researcher.strategy_summary_path.read_text(encoding="utf-8"))
+        dashboard = json.loads(researcher.dashboard_path.read_text(encoding="utf-8"))
+        semantic_calibration = json.loads(researcher.semantic_calibration_path.read_text(encoding="utf-8"))
         assert evaluation["summary"]["reference_runs_compared"] == 1
         assert comparison["compared_runs_count"] == 1
         assert comparison["runs"][0]["strategy"] == "ensemble"
         assert comparison["runs"][0]["score_delta"] == 8.0
         assert comparison["runs"][0]["shared_dimensions"] == ["Developer experience"]
         assert comparison["summary"]["consistency_level"] in {"medium", "high", "low"}
+        assert comparison["strategy_summary"]["best_reference_strategy"] == "ensemble"
+        assert strategy_summary["current_strategy"] == researcher.config.execution.strategy
+        assert any(item["strategy"] == "ensemble" for item in strategy_summary["strategies"])
+        assert dashboard["current_strategy"] == researcher.config.execution.strategy
+        assert dashboard["reference_runs_compared"] == 1
+        assert dashboard["strategy_summary"]["best_reference_strategy"] == "ensemble"
+        assert semantic_calibration["enabled"] is True
+        assert semantic_calibration["grade"] in {"well_calibrated", "reasonable", "tentative", "weak"}
 
 
 # ---------------------------------------------------------------------------

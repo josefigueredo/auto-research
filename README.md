@@ -281,6 +281,7 @@ The framework now supports an optional `evaluation:` config section:
 - `expected_dimensions` — benchmark dimensions you expect the run to cover (overrides bundled benchmark values when set)
 - `required_keywords` — keywords you expect to appear in the final research output (overrides bundled benchmark values when set)
 - `reference_runs` — prior output directories to compare against for repeatability and cross-strategy analysis
+- `semantic_calibration` — whether to generate a calibrated semantic quality score (enabled by default)
 
 The framework also supports an optional `reporting:` config section:
 
@@ -291,9 +292,12 @@ When enabled, the run emits:
 
 - `baseline.md` — single-pass baseline answer from the synthesis backend
 - `evaluation.json` — comparison of iterative synthesis vs baseline, including
-  claim/citation counts, evidence-quality summary, rubric results, bundled benchmark metadata, and benchmark expectation coverage
+  claim/citation counts, evidence-quality summary, rubric results, semantic calibration, bundled benchmark metadata, and benchmark expectation coverage
 - `comparison.json` — overlap metrics versus referenced prior runs (dimensions, citations, claims, score deltas, and consistency level)
+- `strategy_summary.json` — strategy-level rollups from referenced runs (average score, overlap, and best reference strategy)
 - `rubric.json` — lightweight research-quality rubric across evidence quality, citation coverage, source diversity, uncertainty reporting, actionability, and contradiction handling
+- `semantic_calibration.json` — calibrated quality score combining rubric, evidence quality, benchmark coverage, consistency, uncertainty reporting, and contradiction handling
+- `dashboard.json` — compact stakeholder summary of benchmark/strategy/rubric status
 - `report.html` — stakeholder-facing HTML summary that renders run metadata, methods, synthesis, rubric results, and evaluation/comparison summaries
 
 The repository now also supports a lightweight benchmark catalog in `benchmarks/`.
@@ -372,10 +376,13 @@ autoresearch/
             evidence_links.json Heuristic claim-to-citation links with support labels
             evidence_quality.json Run-level evidence quality summary
             rubric.json         Research-quality rubric summary
+            semantic_calibration.json Calibrated semantic quality summary
             contradictions.json Potentially conflicting recommendations for review
             baseline.md       Single-pass baseline answer (optional)
             evaluation.json   Iterative-vs-baseline comparison summary (optional)
             comparison.json   Reference-run consistency summary (optional)
+            strategy_summary.json Strategy-level rollup from reference runs (optional)
+            dashboard.json    Executive summary artifact (optional)
             report.html       Human-readable HTML report (optional, enabled by default)
 ```
 

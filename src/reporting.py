@@ -17,6 +17,8 @@ def render_html_report(
     rubric: dict[str, Any],
     evaluation: dict[str, Any] | None,
     comparison: dict[str, Any] | None,
+    semantic_calibration: dict[str, Any] | None,
+    dashboard: dict[str, Any] | None,
     methods_text: str,
     synthesis_text: str,
 ) -> str:
@@ -51,6 +53,26 @@ def render_html_report(
           <p><strong>Compared runs:</strong> {comparison.get("compared_runs_count", 0)}</p>
           <p><strong>Consistency level:</strong> {escape(str(comparison.get("summary", {}).get("consistency_level", "")))}</p>
           <pre>{escape(_pretty_json_like(comparison))}</pre>
+        </section>
+        """
+
+    dashboard_html = ""
+    if dashboard:
+        dashboard_html = f"""
+        <section>
+          <h2>Dashboard Summary</h2>
+          <pre>{escape(_pretty_json_like(dashboard))}</pre>
+        </section>
+        """
+
+    semantic_html = ""
+    if semantic_calibration and semantic_calibration.get("enabled", False):
+        semantic_html = f"""
+        <section>
+          <h2>Semantic Calibration</h2>
+          <p><strong>Grade:</strong> {escape(str(semantic_calibration.get("grade", "")))}</p>
+          <p><strong>Calibrated score:</strong> {escape(str(semantic_calibration.get("calibrated_score", "")))}</p>
+          <pre>{escape(_pretty_json_like(semantic_calibration))}</pre>
         </section>
         """
 
@@ -122,6 +144,8 @@ def render_html_report(
     <pre>{escape(_pretty_json_like(rubric))}</pre>
   </section>
 
+  {semantic_html}
+  {dashboard_html}
   {evaluation_html}
   {comparison_html}
 </body>

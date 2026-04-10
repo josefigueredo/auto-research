@@ -141,6 +141,7 @@ class EvaluationConfig:
         expected_dimensions: Optional benchmark expectations for covered dimensions.
         required_keywords: Optional benchmark keywords expected in the synthesis.
         reference_runs: Optional prior output directories for consistency / strategy comparison.
+        semantic_calibration: Whether to derive a calibrated semantic quality score.
     """
 
     benchmark_id: str = ""
@@ -148,6 +149,7 @@ class EvaluationConfig:
     expected_dimensions: tuple[str, ...] = ()
     required_keywords: tuple[str, ...] = ()
     reference_runs: tuple[str, ...] = ()
+    semantic_calibration: bool = True
 
 
 @dataclass(frozen=True)
@@ -270,6 +272,7 @@ class ResearchConfig:
             expected_dimensions=tuple(evaluation_raw.get("expected_dimensions", [])),
             required_keywords=tuple(evaluation_raw.get("required_keywords", [])),
             reference_runs=tuple(evaluation_raw.get("reference_runs", [])),
+            semantic_calibration=evaluation_raw.get("semantic_calibration", True),
         )
 
         # --- Reporting --------------------------------------------------------

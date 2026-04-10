@@ -98,6 +98,7 @@ class TestEvaluationConfig:
         assert ec.expected_dimensions == ()
         assert ec.required_keywords == ()
         assert ec.reference_runs == ()
+        assert ec.semantic_calibration is True
 
 
 class TestReportingConfig:
@@ -191,6 +192,7 @@ class TestResearchConfigFromYaml:
                 reference_runs:
                   - "output/run-a"
                   - "output/run-b"
+                semantic_calibration: false
         """), encoding="utf-8")
         cfg = ResearchConfig.from_yaml(p)
         assert cfg.evaluation.benchmark_id == "bench-001"
@@ -198,6 +200,7 @@ class TestResearchConfigFromYaml:
         assert cfg.evaluation.expected_dimensions == ("Cost", "Security")
         assert cfg.evaluation.required_keywords == ("pricing", "latency")
         assert cfg.evaluation.reference_runs == ("output/run-a", "output/run-b")
+        assert cfg.evaluation.semantic_calibration is False
 
     def test_reporting_config(self, tmp_path: Path):
         p = tmp_path / "reporting.yaml"

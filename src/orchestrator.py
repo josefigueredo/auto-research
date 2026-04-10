@@ -104,6 +104,9 @@ class AutoResearcher:
         self.baseline_path = output_dir / "baseline.md"
         self.evaluation_path = output_dir / "evaluation.json"
         self.comparison_path = output_dir / "comparison.json"
+        self.strategy_summary_path = output_dir / "strategy_summary.json"
+        self.dashboard_path = output_dir / "dashboard.json"
+        self.semantic_calibration_path = output_dir / "semantic_calibration.json"
         self.report_html_path = output_dir / "report.html"
 
         # Multi-backend support
@@ -915,6 +918,7 @@ class AutoResearcher:
         self._write_run_manifest()
         self._write_metrics()
         self._write_provenance_artifacts()
+        self._write_dashboard_artifact()
         self._write_html_report()
 
     def _write_run_manifest(self) -> None:
@@ -999,11 +1003,29 @@ class AutoResearcher:
         evidence_quality = summarize_evidence_quality(self._claims, evidence_links)
         contradictions = detect_claim_conflicts(self._claims)
         rubric = score_research_rubric(self._claims, self._citations, evidence_links, contradictions)
+        benchmark_summary = self._benchmark_summary()
+        reference_comparison = self._reference_run_comparison()
+        semantic_calibration = self._semantic_calibration(
+            rubric=rubric,
+            evidence_quality=evidence_quality,
+            benchmark_summary=benchmark_summary,
+            reference_comparison=reference_comparison,
+        )
         self.evidence_links_path.write_text(json.dumps(evidence_links, indent=2), encoding="utf-8")
         self.evidence_quality_path.write_text(json.dumps(evidence_quality, indent=2), encoding="utf-8")
         self.rubric_path.write_text(json.dumps(rubric, indent=2), encoding="utf-8")
         self.contradictions_path.write_text(json.dumps(contradictions, indent=2), encoding="utf-8")
-        self._write_evaluation_artifact(evidence_quality, rubric)
+        self.semantic_calibration_path.write_text(
+            json.dumps(semantic_calibration, indent=2),
+            encoding="utf-8",
+        )
+        self._write_evaluation_artifact(
+            evidence_quality,
+            rubric,
+            benchmark_summary=benchmark_summary,
+            reference_comparison=reference_comparison,
+            semantic_calibration=semantic_calibration,
+        )
 
     def _generate_baseline(self) -> None:
         """Generate an optional single-pass baseline answer for comparison."""
@@ -1021,7 +1043,15 @@ class AutoResearcher:
             self.baseline_path.write_text(resp.text, encoding="utf-8")
             self._collect_provenance(resp.text, scope="baseline")
 
-    def _write_evaluation_artifact(self, evidence_quality: dict[str, Any], rubric: dict[str, Any]) -> None:
+    def _write_evaluation_artifact(
+        self,
+        evidence_quality: dict[str, Any],
+        rubric: dict[str, Any],
+        *,
+        benchmark_summary: dict[str, Any],
+        reference_comparison: dict[str, Any],
+        semantic_calibration: dict[str, Any],
+    ) -> None:
         """Write optional evaluation summary comparing iterative output to a baseline."""
         if (
             not self.config.evaluation.run_baselines
@@ -1034,9 +1064,6 @@ class AutoResearcher:
         synthesis_claims = [claim for claim in self._claims if claim.get("scope") == "synthesis"]
         baseline_citations = [citation for citation in self._citations if citation.get("scope") == "baseline"]
         synthesis_citations = [citation for citation in self._citations if citation.get("scope") == "synthesis"]
-        benchmark_summary = self._benchmark_summary()
-        reference_comparison = self._reference_run_comparison()
-
         payload = {
             "benchmark_id": self.config.evaluation.benchmark_id,
             "baseline_generated": self.baseline_path.exists(),
@@ -1052,16 +1079,22 @@ class AutoResearcher:
             "rubric": rubric,
             "benchmark": benchmark_summary,
             "reference_comparison": reference_comparison,
+            "semantic_calibration": semantic_calibration,
             "summary": {
                 "iterative_has_more_claims_than_baseline": len(synthesis_claims) > len(baseline_claims),
                 "iterative_has_more_citations_than_baseline": len(synthesis_citations) > len(baseline_citations),
                 "benchmark_expectations_satisfied": benchmark_summary.get("all_expectations_satisfied", True),
                 "reference_runs_compared": reference_comparison.get("compared_runs_count", 0),
                 "rubric_grade": rubric.get("grade", "insufficient"),
+                "semantic_calibration_grade": semantic_calibration.get("grade", "disabled"),
             },
         }
         self.evaluation_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         self.comparison_path.write_text(json.dumps(reference_comparison, indent=2), encoding="utf-8")
+        self.strategy_summary_path.write_text(
+            json.dumps(reference_comparison.get("strategy_summary", {}), indent=2),
+            encoding="utf-8",
+        )
 
     def _write_html_report(self) -> None:
         """Render a standalone HTML report when enabled."""
@@ -1086,6 +1119,16 @@ class AutoResearcher:
             if self.comparison_path.exists()
             else None
         )
+        semantic_calibration = (
+            json.loads(self.semantic_calibration_path.read_text(encoding="utf-8"))
+            if self.semantic_calibration_path.exists()
+            else None
+        )
+        dashboard = (
+            json.loads(self.dashboard_path.read_text(encoding="utf-8"))
+            if self.dashboard_path.exists()
+            else None
+        )
         methods_text = self.methods_path.read_text(encoding="utf-8") if self.methods_path.exists() else ""
         synthesis_text = self.synthesis_path.read_text(encoding="utf-8") if self.synthesis_path.exists() else ""
         title = self.config.reporting.report_title or f"Autoresearch Report — {self.config.topic}"
@@ -1099,10 +1142,135 @@ class AutoResearcher:
             rubric=rubric,
             evaluation=evaluation,
             comparison=comparison,
+            semantic_calibration=semantic_calibration,
+            dashboard=dashboard,
             methods_text=methods_text,
             synthesis_text=synthesis_text,
         )
         self.report_html_path.write_text(html, encoding="utf-8")
+
+    def _write_dashboard_artifact(self) -> None:
+        """Write a stakeholder-friendly summary dashboard artifact."""
+        rubric = json.loads(self.rubric_path.read_text(encoding="utf-8")) if self.rubric_path.exists() else {}
+        evidence_quality = (
+            json.loads(self.evidence_quality_path.read_text(encoding="utf-8"))
+            if self.evidence_quality_path.exists()
+            else {}
+        )
+        comparison = (
+            json.loads(self.comparison_path.read_text(encoding="utf-8"))
+            if self.comparison_path.exists()
+            else {}
+        )
+        evaluation = (
+            json.loads(self.evaluation_path.read_text(encoding="utf-8"))
+            if self.evaluation_path.exists()
+            else {}
+        )
+        strategy_summary = (
+            json.loads(self.strategy_summary_path.read_text(encoding="utf-8"))
+            if self.strategy_summary_path.exists()
+            else {}
+        )
+
+        payload = {
+            "topic": self.config.topic,
+            "goal": self.config.goal,
+            "benchmark_id": self.config.evaluation.benchmark_id,
+            "current_strategy": self.config.execution.strategy,
+            "best_score": self.best_score,
+            "rubric_grade": rubric.get("grade", "insufficient"),
+            "rubric_overall_score": rubric.get("overall_score", 0.0),
+            "evidence_quality_score": evidence_quality.get("average_evidence_quality_score", 0.0),
+            "iterations": self.iteration,
+            "explored_dimensions_count": len(self.explored_dimensions),
+            "explored_dimensions": self.explored_dimensions,
+            "strategy_summary": strategy_summary,
+            "consistency_level": comparison.get("summary", {}).get("consistency_level", "not_available"),
+            "reference_runs_compared": comparison.get("compared_runs_count", 0),
+            "benchmark_expectations_satisfied": evaluation.get("summary", {}).get(
+                "benchmark_expectations_satisfied", True
+            ),
+            "semantic_calibration": (
+                json.loads(self.semantic_calibration_path.read_text(encoding="utf-8"))
+                if self.semantic_calibration_path.exists()
+                else {}
+            ),
+        }
+        self.dashboard_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def _semantic_calibration(
+        self,
+        *,
+        rubric: dict[str, Any],
+        evidence_quality: dict[str, Any],
+        benchmark_summary: dict[str, Any],
+        reference_comparison: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Combine rubric, benchmark, evidence, and consistency into a calibrated quality score."""
+        if not self.config.evaluation.semantic_calibration:
+            return {
+                "enabled": False,
+                "calibrated_score": 0.0,
+                "grade": "disabled",
+                "components": {},
+            }
+
+        rubric_score = float(rubric.get("overall_score", 0.0))
+        evidence_score = float(evidence_quality.get("average_evidence_quality_score", 0.0))
+        benchmark_score = round(
+            (
+                float(benchmark_summary.get("dimension_coverage_score", 1.0))
+                + float(benchmark_summary.get("keyword_coverage_score", 1.0))
+            )
+            / 2,
+            2,
+        )
+        reference_summary = reference_comparison.get("summary", {})
+        consistency_score = round(
+            (
+                float(reference_summary.get("average_dimension_overlap", 0.0))
+                + float(reference_summary.get("average_citation_overlap", 0.0))
+                + float(reference_summary.get("average_claim_overlap", 0.0))
+            )
+            / 3,
+            2,
+        ) if reference_comparison.get("compared_runs_count", 0) else 0.5
+        uncertainty_score = float(rubric.get("dimensions", {}).get("uncertainty_reporting", 0.0))
+        contradiction_score = float(rubric.get("dimensions", {}).get("contradiction_handling", 1.0))
+
+        calibrated_score = round(
+            rubric_score * 0.4
+            + evidence_score * 0.2
+            + benchmark_score * 0.2
+            + consistency_score * 0.1
+            + uncertainty_score * 0.05
+            + contradiction_score * 0.05,
+            2,
+        )
+
+        if calibrated_score >= 0.85:
+            grade = "well_calibrated"
+        elif calibrated_score >= 0.65:
+            grade = "reasonable"
+        elif calibrated_score >= 0.45:
+            grade = "tentative"
+        else:
+            grade = "weak"
+
+        return {
+            "enabled": True,
+            "calibrated_score": calibrated_score,
+            "grade": grade,
+            "components": {
+                "rubric_score": rubric_score,
+                "evidence_score": evidence_score,
+                "benchmark_score": benchmark_score,
+                "consistency_score": consistency_score,
+                "uncertainty_score": uncertainty_score,
+                "contradiction_score": contradiction_score,
+            },
+        }
 
     @staticmethod
     def _normalize_claim_text(text: str) -> str:
@@ -1115,6 +1283,7 @@ class AutoResearcher:
             return {
                 "compared_runs_count": 0,
                 "runs": [],
+                "strategy_summary": self._summarize_strategies([]),
                 "summary": {
                     "average_dimension_overlap": 0.0,
                     "average_citation_overlap": 0.0,
@@ -1205,6 +1374,7 @@ class AutoResearcher:
             return {
                 "compared_runs_count": 0,
                 "runs": runs,
+                "strategy_summary": self._summarize_strategies([]),
                 "summary": {
                     "average_dimension_overlap": 0.0,
                     "average_citation_overlap": 0.0,
@@ -1229,6 +1399,7 @@ class AutoResearcher:
         return {
             "compared_runs_count": len(successful),
             "runs": runs,
+            "strategy_summary": self._summarize_strategies(successful),
             "summary": {
                 "average_dimension_overlap": avg_dimension,
                 "average_citation_overlap": avg_citation,
@@ -1236,6 +1407,67 @@ class AutoResearcher:
                 "average_score_delta": avg_score_delta,
                 "consistency_level": consistency_level,
             },
+        }
+
+    def _summarize_strategies(self, successful_runs: list[dict[str, Any]]) -> dict[str, Any]:
+        """Aggregate comparison metrics by strategy, including the current run."""
+        strategies: dict[str, dict[str, Any]] = {}
+
+        current_strategy = self.config.execution.strategy
+        strategies[current_strategy] = {
+            "strategy": current_strategy,
+            "role": "current",
+            "runs_count": 1,
+            "average_best_score": round(self.best_score, 2),
+            "average_score_delta": 0.0,
+            "average_dimension_overlap": 1.0,
+            "average_citation_overlap": 1.0,
+            "average_claim_overlap": 1.0,
+        }
+
+        buckets: dict[str, list[dict[str, Any]]] = {}
+        for run in successful_runs:
+            strategy = str(run.get("strategy", "") or "unknown")
+            buckets.setdefault(strategy, []).append(run)
+
+        for strategy, runs in buckets.items():
+            strategies[strategy] = {
+                "strategy": strategy,
+                "role": "reference",
+                "runs_count": len(runs),
+                "average_best_score": round(
+                    sum(float(run.get("best_score", 0.0)) for run in runs) / len(runs),
+                    2,
+                ),
+                "average_score_delta": round(
+                    sum(float(run.get("score_delta", 0.0)) for run in runs) / len(runs),
+                    2,
+                ),
+                "average_dimension_overlap": round(
+                    sum(float(run.get("dimension_overlap", 0.0)) for run in runs) / len(runs),
+                    2,
+                ),
+                "average_citation_overlap": round(
+                    sum(float(run.get("citation_overlap", 0.0)) for run in runs) / len(runs),
+                    2,
+                ),
+                "average_claim_overlap": round(
+                    sum(float(run.get("claim_overlap", 0.0)) for run in runs) / len(runs),
+                    2,
+                ),
+            }
+
+        ordered = sorted(strategies.values(), key=lambda item: (item["role"] != "current", -item["average_best_score"]))
+        best_reference = None
+        for entry in ordered:
+            if entry["role"] == "reference":
+                best_reference = entry
+                break
+
+        return {
+            "current_strategy": current_strategy,
+            "strategies": ordered,
+            "best_reference_strategy": best_reference["strategy"] if best_reference else "",
         }
 
     def _load_benchmark_definition(self) -> dict[str, Any]:

@@ -27,6 +27,7 @@ research:
     expected_dimensions: []   # Optional benchmark coverage expectations; overrides bundled benchmark dimensions
     required_keywords: []     # Optional keywords expected in the final output; overrides bundled benchmark keywords
     reference_runs: []        # Optional prior output dirs for consistency / cross-strategy comparison
+    semantic_calibration: true # Generate semantic_calibration.json and include it in evaluation/reporting
 
   reporting:
     export_html: true         # Generate report.html from final run artifacts
