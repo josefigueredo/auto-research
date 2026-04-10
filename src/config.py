@@ -185,6 +185,8 @@ class ExecutionConfig:
         model: Model name (backend-specific, e.g. ``"sonnet"`` for Claude).
         max_budget_per_call: USD cap per CLI invocation (backends that don't
             support per-call budgets ignore this).
+        lightweight_mode: Prefer shorter prompts/artifacts and stricter goal-shape
+            obedience for trivial or smoke-test runs.
     """
 
     max_iterations: int = 0
@@ -195,6 +197,7 @@ class ExecutionConfig:
     backend: str = "claude"
     model: str = "sonnet"
     max_budget_per_call: float = 0.50
+    lightweight_mode: bool = False
     strategy: str = "single"
     backends: BackendsConfig = field(default_factory=BackendsConfig)
     strategy_config: StrategyConfig = field(default_factory=StrategyConfig)
@@ -386,6 +389,7 @@ class ResearchConfig:
             backend=backend,
             model=model,
             max_budget_per_call=max_budget,
+            lightweight_mode=exec_raw.get("lightweight_mode", exec_defaults.lightweight_mode),
             strategy=strategy,
             backends=backends_config,
             strategy_config=strategy_config,

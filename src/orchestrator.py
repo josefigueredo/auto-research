@@ -13,6 +13,7 @@ import importlib.metadata
 import json
 import logging
 import platform
+import re
 import subprocess
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -48,6 +49,7 @@ from .strategy import ResearchCandidate, Strategy, get_strategy
 log = logging.getLogger("autoresearch")
 
 KB_MAX_WORDS = 4000
+LIGHTWEIGHT_KB_WORDS = 800
 
 
 # ---------------------------------------------------------------------------
@@ -799,13 +801,17 @@ class AutoResearcher:
             log.info("No knowledge base to synthesize.")
             return
 
-        results_summary = self._format_results_table()
+        results_summary = self._synthesis_results_summary()
+        knowledge_context = self._synthesis_knowledge_context()
 
         prompt = _render(
             "synthesize.md",
             topic=self.config.topic,
+            goal=self.config.goal,
             methodology=self._methodology_summary(),
-            knowledge_base=self.knowledge_base,
+            goal_constraints=self._goal_constraints_summary(),
+            lightweight_mode="yes" if self._is_lightweight_mode() else "no",
+            knowledge_base=knowledge_context,
             results_summary=results_summary,
         )
 
@@ -865,6 +871,77 @@ class AutoResearcher:
             lines.append(f"- Prefer sources from the last {methodology.recency_days} days for unstable facts.")
         return "\n".join(lines) if lines else "(No explicit methodology constraints.)"
 
+    def _is_lightweight_mode(self) -> bool:
+        """Return True when the run should optimize for brevity and low overhead."""
+        if self.config.execution.lightweight_mode:
+            return True
+
+        goal_text = f"{self.config.goal} {self.config.topic}".lower()
+        short_goal = any(
+            phrase in goal_text
+            for phrase in (
+                "under 100 words",
+                "under 150 words",
+                "under 200 words",
+                "bullet-point list",
+                "bullet point list",
+                "brief answer",
+                "short answer",
+                "smoke test",
+                "sanity check",
+            )
+        )
+        small_run = (
+            len(self.config.dimensions) <= 2
+            and self.config.execution.max_iterations in {0, 1}
+            and not self.config.execution.allowed_tools
+        )
+        return short_goal or small_run
+
+    def _goal_constraints_summary(self) -> str:
+        """Extract explicit deliverable constraints from the goal text."""
+        goal = self.config.goal.strip()
+        if not goal:
+            return "- Deliverable shape: not explicitly constrained."
+
+        lines: list[str] = [f"- Deliverable goal: {goal}"]
+        lowered = goal.lower()
+        if "bullet" in lowered:
+            lines.append("- Format: use bullet points instead of a long narrative report.")
+        if "table" in lowered:
+            lines.append("- Format: include a compact table if it helps satisfy the goal.")
+        word_match = re.search(r"under\s+(\d+)\s+words?", lowered)
+        if word_match:
+            lines.append(f"- Hard limit: keep the final answer under {word_match.group(1)} words.")
+        if any(term in lowered for term in ("brief", "short", "concise")):
+            lines.append("- Style: be concise and avoid extra sections.")
+        if self._is_lightweight_mode():
+            lines.append("- Mode: lightweight mode is active; prefer the shortest output that still satisfies the goal.")
+        return "\n".join(lines)
+
+    def _synthesis_knowledge_context(self) -> str:
+        """Return the knowledge context to send to synthesis."""
+        if not self._is_lightweight_mode():
+            return self.knowledge_base
+
+        words = self.knowledge_base.split()
+        if len(words) <= LIGHTWEIGHT_KB_WORDS:
+            return self.knowledge_base
+        return " ".join(words[:LIGHTWEIGHT_KB_WORDS]) + "\n\n[lightweight mode: truncated knowledge base]"
+
+    def _synthesis_results_summary(self) -> str:
+        """Return a run summary tailored for synthesis prompting."""
+        if not self.results:
+            return "(no results yet)"
+        if not self._is_lightweight_mode():
+            return self._format_results_table()
+
+        recent = self.results[-3:]
+        return "\n".join(
+            f"- Iter {row.get('iteration', '?')}: {row.get('dimension', '?')} — score {row.get('total_score', '?')} ({row.get('status', '?')})"
+            for row in recent
+        )
+
     def _format_results_table(self) -> str:
         """Format the results log as a markdown table for synthesis prompts."""
         if not self.results:
@@ -890,6 +967,7 @@ class AutoResearcher:
             f"- Strategy: {self.strategy.describe()}\n"
             f"- Resume requested: {self.resume}\n"
             f"- Max iterations: {self.config.execution.max_iterations}\n"
+            f"- Lightweight mode: {self._is_lightweight_mode()}\n"
             f"- Target dimensions total: {self.config.scoring.target_dimensions_total}\n"
             f"- Allowed tools: {self.config.execution.allowed_tools or '(none)'}\n"
         )
@@ -1052,7 +1130,10 @@ class AutoResearcher:
         prompt = _render(
             "baseline.md",
             topic=self.config.topic,
+            goal=self.config.goal,
             methodology=self._methodology_summary(),
+            goal_constraints=self._goal_constraints_summary(),
+            lightweight_mode="yes" if self._is_lightweight_mode() else "no",
         )
         baseline_backend = self.strategy.get_synthesize_backend()
         resp = self._call_with(baseline_backend, prompt, max_turns=3)

@@ -23,6 +23,7 @@ The project now includes:
 - optional semantic judge review (`semantic_review.json`)
 - stakeholder-facing HTML and PDF report generation (`report.html`, `report.pdf`)
 - portfolio-level aggregation across runs (`portfolio.json`, `portfolio.html`)
+- lightweight mode for smoke tests and short-form deliverables
 
 Test status at the time of this update:
 
@@ -292,6 +293,11 @@ The framework also supports an optional `reporting:` config section:
 - `export_pdf` — whether to emit `report.pdf`
 - `report_title` — optional custom title for the rendered HTML report
 
+For short-answer tasks and smoke tests, the execution config also supports:
+
+- `lightweight_mode` — prefer shorter prompts/artifacts and stricter obedience
+  to goals like “bullet list under 100 words”
+
 When enabled, the run emits:
 
 - `baseline.md` — single-pass baseline answer from the synthesis backend
@@ -433,6 +439,7 @@ autoresearch/
         max_budget_per_call: 0.50
         timeout_seconds: 600
         compress_every: 5
+        lightweight_mode: false
     ```
 
 3. Run: `uv run python -m src.cli --config configs/your_topic.yaml`
@@ -451,6 +458,7 @@ autoresearch/
 | `max_budget_per_call` | `0.50` | USD cap per invocation (Claude only) |
 | `timeout_seconds` | `600` | Timeout per invocation in seconds |
 | `compress_every` | `5` | Compress knowledge base every N iterations |
+| `lightweight_mode` | `false` | Use shorter prompts/artifacts and stricter short-goal obedience |
 | `allowed_tools` | `WebSearch,...` | Tools available to the research agent |
 | `strategy` | `single` | Multi-backend strategy (see below) |
 | `backends.primary` | same as `backend` | Backend for hypothesis + synthesis |

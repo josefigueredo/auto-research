@@ -54,6 +54,7 @@ research:
 
     backend: claude         # "claude", "codex", "gemini", or "copilot"
     model: sonnet           # model name (backend-specific, see below)
+    lightweight_mode: false # Prefer shorter prompts/artifacts and stricter short-goal obedience
 
     # ---------------------------------------------------------------
     # Multi-backend strategies (optional — omit for single-backend)

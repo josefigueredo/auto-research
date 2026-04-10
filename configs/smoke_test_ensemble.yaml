@@ -24,6 +24,7 @@ research:
     model: sonnet
     max_budget_per_call: 1.00
     timeout_seconds: 300
+    lightweight_mode: true
 
     strategy: ensemble
     backends:

@@ -144,6 +144,73 @@ class TestAutoResearcherSetup:
         assert "# Research Methods" in methods
         assert "Test goal" in methods
 
+    def test_lightweight_mode_is_auto_detected_for_short_smoke_goal(self, researcher):
+        researcher.config = ResearchConfig(
+            topic="What are three pros and cons of Python?",
+            goal="A bullet-point list in under 100 words",
+            dimensions=("Developer experience",),
+            methodology=researcher.config.methodology,
+            evaluation=researcher.config.evaluation,
+            reporting=researcher.config.reporting,
+            scoring=researcher.config.scoring,
+            execution=ExecutionConfig(
+                max_iterations=1,
+                backend="claude",
+                model="sonnet",
+                timeout_seconds=10,
+                max_budget_per_call=0.10,
+                allowed_tools="",
+            ),
+        )
+        assert researcher._is_lightweight_mode() is True
+        constraints = researcher._goal_constraints_summary().lower()
+        assert "bullet points" in constraints
+        assert "under 100 words" in constraints
+
+    def test_generate_synthesis_uses_goal_constraints_and_lightweight_context(self, researcher):
+        researcher.config = ResearchConfig(
+            topic="What are three pros and cons of Python?",
+            goal="A bullet-point list in under 100 words",
+            dimensions=("Developer experience",),
+            methodology=researcher.config.methodology,
+            evaluation=researcher.config.evaluation,
+            reporting=researcher.config.reporting,
+            scoring=researcher.config.scoring,
+            execution=ExecutionConfig(
+                max_iterations=1,
+                backend="claude",
+                model="sonnet",
+                timeout_seconds=10,
+                max_budget_per_call=0.10,
+                allowed_tools="",
+            ),
+        )
+        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher._setup()
+        researcher.knowledge_base = "word " * 2000
+        researcher.results = [
+            {"iteration": "001", "dimension": "Developer experience", "total_score": "80.0", "status": "keep"}
+        ]
+
+        captured: dict[str, str] = {}
+
+        def fake_call(backend, prompt, **kwargs):
+            captured["prompt"] = prompt
+            return AgentResponse(text="- Pro: readable\n- Con: slower", cost_usd=0.0, is_error=False)
+
+        with patch.object(researcher, "_call_with", side_effect=fake_call):
+            researcher._generate_synthesis()
+
+        prompt = captured["prompt"]
+        assert "Deliverable Goal" in prompt
+        assert "under 100 words" in prompt.lower()
+        assert "lightweight_mode" in prompt
+        assert "lightweight mode: truncated knowledge base" in prompt.lower()
+        assert "| Iter | Dimension | Score | Status |" not in prompt
+        assert "- Iter 001: Developer experience" in prompt
+
     def test_finalize_writes_html_report(self, researcher):
         with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
              patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
