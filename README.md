@@ -24,7 +24,7 @@ The project now includes:
 
 Test status at the time of this update:
 
-- **226 passing tests**
+- **230 passing tests**
 
 ## The Pattern
 
@@ -369,6 +369,7 @@ autoresearch/
         test_strategy.py    Multi-backend strategy logic
         test_scorer.py      Heuristic + judge scoring
         test_cli.py         CLI argument parsing
+        test_reporting.py   Template-based HTML report renderer
     output/                 Runtime artifacts (gitignored)
         <config-name>/
             results.tsv         Experiment log (TSV: scores, gaps, cumulative cost/tokens)
@@ -797,7 +798,7 @@ uv sync --group dev
 uv run pytest tests/ -v
 ```
 
-226 tests covering all modules (backends, config, scorer, orchestrator, cli, strategy, provenance, reporting).
+230 tests covering all modules (backends, config, scorer, orchestrator, cli, strategy, provenance, reporting).
 Each backend has independent tests: `uv run pytest tests/test_backends/test_claude.py`
 
 ## Related Projects
