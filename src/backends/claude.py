@@ -29,7 +29,6 @@ class ClaudeBackend(Backend):
         supports_json_schema=True,
         supports_budget_cap=True,
         supports_rate_limit_detection=True,
-        supports_isolated_context=False,
         default_model="sonnet",
     )
 
