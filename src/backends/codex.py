@@ -25,7 +25,7 @@ class CodexBackend(Backend):
         return PromptMode.STDIN
 
     def build_command(self, opts: CallOptions) -> list[str]:
-        cmd = ["codex", "exec", "--json"]
+        cmd = ["codex", "exec", "--json", "--skip-git-repo-check"]
         if opts.model:
             cmd.extend(["--model", opts.model])
         if opts.allowed_tools:

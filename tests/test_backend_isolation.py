@@ -53,6 +53,39 @@ def test_unsanitized_env_returns_none():
     assert Backend.build_process_env(sanitize=False) is None
 
 
+def test_sanitized_env_preserves_systemroot_regardless_of_case(monkeypatch):
+    """Regression: Windows reports %SYSTEMROOT% in uppercase, so the keep
+    list must match case-insensitively — otherwise dnsapi.dll fails to
+    initialize in child processes and DNS lookups return os error 11003.
+    """
+    # Clear any case variants that may already be present
+    for variant in ("SystemRoot", "SYSTEMROOT", "systemroot"):
+        monkeypatch.delenv(variant, raising=False)
+    monkeypatch.setenv("SYSTEMROOT", "C:\\Windows")
+
+    env = Backend.build_process_env(sanitize=True)
+    assert env is not None
+    assert env.get("SYSTEMROOT") == "C:\\Windows"
+
+
+def test_sanitized_env_keep_list_is_case_insensitive(monkeypatch):
+    """Any case variant of a keep-list entry must survive sanitization.
+
+    Windows stores env var names uppercase in ``os.environ`` regardless of
+    the case used at set-time, so the filter must compare case-insensitively
+    to preserve variables listed in the keep set as camelCase.
+    """
+    for variant in ("ComSpec", "COMSPEC", "comspec"):
+        monkeypatch.delenv(variant, raising=False)
+    monkeypatch.setenv("ComSpec", "C:\\Windows\\system32\\cmd.exe")
+
+    env = Backend.build_process_env(sanitize=True)
+    assert env is not None
+    # Match case-insensitively — the key survives, whatever case Windows used.
+    matched = {k.upper(): v for k, v in env.items()}
+    assert matched.get("COMSPEC") == "C:\\Windows\\system32\\cmd.exe"
+
+
 def test_orchestrator_only_isolates_compatible_backends(tmp_path):
     backend = StubBackend()
     cfg = ResearchConfig(

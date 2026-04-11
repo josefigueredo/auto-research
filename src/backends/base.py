@@ -88,9 +88,9 @@ class Backend(ABC):
         keep = {
             "PATH",
             "PATHEXT",
-            "SystemRoot",
+            "SYSTEMROOT",
+            "SYSTEMDRIVE",
             "WINDIR",
-            "ComSpec",
             "COMSPEC",
             "HOME",
             "USERPROFILE",
@@ -99,7 +99,6 @@ class Backend(ABC):
             "APPDATA",
             "LOCALAPPDATA",
             "PROGRAMDATA",
-            "ProgramData",
             "TEMP",
             "TMP",
             "TMPDIR",
@@ -137,7 +136,16 @@ class Backend(ABC):
             "AZURE_OPENAI_ENDPOINT",
             "COPILOT_TOKEN",
         }
-        return {key: value for key, value in os.environ.items() if key in keep}
+        # Windows env var names are case-insensitive at the OS level but
+        # Python's os.environ preserves whatever case Windows reports (usually
+        # uppercase).  Match case-insensitively so the keep list survives
+        # regardless of how each variable is actually stored.
+        keep_upper = {k.upper() for k in keep}
+        return {
+            key: value
+            for key, value in os.environ.items()
+            if key.upper() in keep_upper
+        }
 
     @staticmethod
     def _run_process(
