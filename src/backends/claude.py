@@ -29,6 +29,7 @@ class ClaudeBackend(Backend):
         supports_json_schema=True,
         supports_budget_cap=True,
         supports_rate_limit_detection=True,
+        supports_isolated_context=False,
         default_model="sonnet",
     )
 
@@ -132,6 +133,8 @@ class ClaudeBackend(Backend):
         exe = self._resolve_executable()
         if exe and cmd and cmd[0] == self.cli_executable():
             cmd[0] = exe
+        env = self.build_process_env(sanitize=opts.sanitize_environment)
+        cwd = opts.working_directory or None
 
         log.debug(
             "%s CLI: %s (prompt: %d chars)",
@@ -139,7 +142,7 @@ class ClaudeBackend(Backend):
         )
 
         try:
-            result = self._run_process(cmd, input=prompt, timeout=timeout)
+            result = self._run_process(cmd, input=prompt, timeout=timeout, cwd=cwd, env=env)
         except subprocess.TimeoutExpired:
             log.warning("%s CLI timed out after %ds.", self.name, timeout)
             return AgentResponse(text="", cost_usd=0.0, is_error=True)

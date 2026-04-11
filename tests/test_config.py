@@ -38,6 +38,8 @@ def full_yaml(tmp_path: Path) -> Path:
             model: opus
             max_budget_per_call: 1.25
             lightweight_mode: true
+            isolate_backend_context: false
+            sanitize_backend_env: false
     """), encoding="utf-8")
     return p
 
@@ -123,6 +125,8 @@ class TestExecutionConfig:
         assert ec.model == "sonnet"
         assert ec.max_budget_per_call == 0.50
         assert ec.lightweight_mode is False
+        assert ec.isolate_backend_context is True
+        assert ec.sanitize_backend_env is True
         assert ec.timeout_seconds == 600
         assert ec.max_turns == 10
         assert "WebSearch" in ec.allowed_tools
@@ -154,6 +158,8 @@ class TestResearchConfigFromYaml:
         assert cfg.execution.model == "opus"
         assert cfg.execution.max_budget_per_call == 1.25
         assert cfg.execution.lightweight_mode is True
+        assert cfg.execution.isolate_backend_context is False
+        assert cfg.execution.sanitize_backend_env is False
 
     def test_methodology_config(self, tmp_path: Path):
         p = tmp_path / "methodology.yaml"

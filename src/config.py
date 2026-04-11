@@ -187,6 +187,13 @@ class ExecutionConfig:
             support per-call budgets ignore this).
         lightweight_mode: Prefer shorter prompts/artifacts and stricter goal-shape
             obedience for trivial or smoke-test runs.
+        isolate_backend_context: Prefer running backend CLIs from an isolated
+            temp working directory instead of the repo root. The orchestrator
+            only applies this automatically to compatible backends; users can
+            still force it per backend in future extensions.
+        sanitize_backend_env: Prefer passing a reduced subprocess environment
+            to backend CLIs. Like isolated context, this is applied only when
+            the backend is marked compatible.
     """
 
     max_iterations: int = 0
@@ -198,6 +205,8 @@ class ExecutionConfig:
     model: str = "sonnet"
     max_budget_per_call: float = 0.50
     lightweight_mode: bool = False
+    isolate_backend_context: bool = True
+    sanitize_backend_env: bool = True
     strategy: str = "single"
     backends: BackendsConfig = field(default_factory=BackendsConfig)
     strategy_config: StrategyConfig = field(default_factory=StrategyConfig)
@@ -390,6 +399,14 @@ class ResearchConfig:
             model=model,
             max_budget_per_call=max_budget,
             lightweight_mode=exec_raw.get("lightweight_mode", exec_defaults.lightweight_mode),
+            isolate_backend_context=exec_raw.get(
+                "isolate_backend_context",
+                exec_defaults.isolate_backend_context,
+            ),
+            sanitize_backend_env=exec_raw.get(
+                "sanitize_backend_env",
+                exec_defaults.sanitize_backend_env,
+            ),
             strategy=strategy,
             backends=backends_config,
             strategy_config=strategy_config,

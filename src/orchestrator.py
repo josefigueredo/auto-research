@@ -12,6 +12,7 @@ import importlib.metadata
 import json
 import logging
 import subprocess
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -174,6 +175,7 @@ class AutoResearcher:
         self._claims: list[dict[str, Any]] = []
         self._citations: list[dict[str, Any]] = []
         self._usage = UsageTotals()
+        self._backend_workdir: Path | None = None
 
     def _call(self, prompt: str, **kwargs: Any) -> AgentResponse:
         """Invoke the default backend with config defaults.
@@ -209,11 +211,14 @@ class AutoResearcher:
         """
         config_model = kwargs.pop("model", self.config.execution.model)
         model = self._resolve_model(backend, config_model)
+        isolated = self._should_isolate_backend(backend)
         opts = CallOptions(
             model=model,
             allowed_tools=kwargs.pop("allowed_tools", ""),
             max_turns=kwargs.pop("max_turns", self.config.execution.max_turns),
             max_budget_usd=kwargs.pop("max_budget_usd", self.config.execution.max_budget_per_call),
+            working_directory=str(self._backend_runtime_dir()) if isolated and self._backend_runtime_dir() else "",
+            sanitize_environment=isolated and self.config.execution.sanitize_backend_env,
         )
         timeout = kwargs.pop("timeout", self.config.execution.timeout_seconds)
         return backend.invoke(prompt, opts, timeout=timeout)
@@ -326,6 +331,7 @@ class AutoResearcher:
     def _setup(self) -> None:
         """Create output directories and initialise results.tsv if needed."""
         setup_output_dir(self.output_dir, self.iterations_dir)
+        self._ensure_backend_runtime_dir()
         if self._run_started_at is None:
             self._run_started_at = datetime.now(timezone.utc).isoformat()
 
@@ -828,6 +834,27 @@ class AutoResearcher:
         if methodology.recency_days > 0:
             lines.append(f"- Prefer sources from the last {methodology.recency_days} days for unstable facts.")
         return "\n".join(lines) if lines else "(No explicit methodology constraints.)"
+
+    def _ensure_backend_runtime_dir(self) -> None:
+        """Create a neutral working directory for backend subprocesses when enabled."""
+        if not self.config.execution.isolate_backend_context:
+            return
+        if self._backend_workdir is None:
+            self._backend_workdir = Path(tempfile.mkdtemp(prefix="autoresearch-backend-"))
+
+    def _backend_runtime_dir(self) -> Path | None:
+        """Return the isolated backend working directory, if enabled."""
+        if not self.config.execution.isolate_backend_context:
+            return None
+        self._ensure_backend_runtime_dir()
+        return self._backend_workdir
+
+    def _should_isolate_backend(self, backend: Backend) -> bool:
+        """Return True when backend-context isolation should be applied."""
+        return (
+            self.config.execution.isolate_backend_context
+            and backend.capabilities.supports_isolated_context
+        )
 
     def _is_lightweight_mode(self) -> bool:
         """Return True when the run should optimize for brevity and low overhead."""

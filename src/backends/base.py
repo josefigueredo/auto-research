@@ -80,11 +80,73 @@ class Backend(ABC):
             return False
 
     @staticmethod
+    def build_process_env(*, sanitize: bool) -> dict[str, str] | None:
+        """Return a sanitized subprocess environment when requested."""
+        if not sanitize:
+            return None
+
+        keep = {
+            "PATH",
+            "PATHEXT",
+            "SystemRoot",
+            "WINDIR",
+            "ComSpec",
+            "COMSPEC",
+            "HOME",
+            "USERPROFILE",
+            "HOMEDRIVE",
+            "HOMEPATH",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "PROGRAMDATA",
+            "ProgramData",
+            "TEMP",
+            "TMP",
+            "TMPDIR",
+            "LANG",
+            "LC_ALL",
+            "TERM",
+            "NO_COLOR",
+            "FORCE_COLOR",
+            "SSL_CERT_FILE",
+            "REQUESTS_CA_BUNDLE",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "NO_PROXY",
+            "USERNAME",
+            "USER",
+            "LOGNAME",
+            "SHELL",
+            "NUMBER_OF_PROCESSORS",
+            "OS",
+            "PROCESSOR_ARCHITECTURE",
+            "PROCESSOR_IDENTIFIER",
+            "PROCESSOR_LEVEL",
+            "PROCESSOR_REVISION",
+            "XDG_CONFIG_HOME",
+            "XDG_CACHE_HOME",
+            "XDG_DATA_HOME",
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "GITHUB_TOKEN",
+            "GH_TOKEN",
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_ENDPOINT",
+            "COPILOT_TOKEN",
+        }
+        return {key: value for key, value in os.environ.items() if key in keep}
+
+    @staticmethod
     def _run_process(
         cmd: list[str],
         *,
         input: str | None = None,
         timeout: int = 300,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Run a subprocess with reliable timeout on Windows.
 
@@ -99,6 +161,8 @@ class Backend(ABC):
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
+            cwd=cwd,
+            env=env,
         )
         if sys.platform == "win32":
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
@@ -144,12 +208,14 @@ class Backend(ABC):
             cmd[0] = exe
 
         stdin_input: str | None = None
+        env = self.build_process_env(sanitize=opts.sanitize_environment)
+        cwd = opts.working_directory or None
 
         if self.prompt_mode() == PromptMode.STDIN:
             stdin_input = prompt
         else:
             if len(prompt) > _ARG_PROMPT_LIMIT:
-                return self._invoke_via_tempfile(prompt, cmd, timeout)
+                return self._invoke_via_tempfile(prompt, cmd, timeout, cwd=cwd, env=env)
             cmd.append(prompt)
 
         log.debug(
@@ -158,7 +224,7 @@ class Backend(ABC):
         )
 
         try:
-            result = self._run_process(cmd, input=stdin_input, timeout=timeout)
+            result = self._run_process(cmd, input=stdin_input, timeout=timeout, cwd=cwd, env=env)
         except subprocess.TimeoutExpired:
             log.warning("%s CLI timed out after %ds.", self.name, timeout)
             return AgentResponse(text="", cost_usd=0.0, is_error=True)
@@ -172,7 +238,7 @@ class Backend(ABC):
         return response
 
     def _invoke_via_tempfile(
-        self, prompt: str, base_cmd: list[str], timeout: int
+        self, prompt: str, base_cmd: list[str], timeout: int, *, cwd: str | None = None, env: dict[str, str] | None = None
     ) -> AgentResponse:
         """Write the prompt to a temp file and pass the path as the last arg."""
         with tempfile.NamedTemporaryFile(
@@ -188,7 +254,7 @@ class Backend(ABC):
                 self.name, " ".join(cmd[:6]), len(prompt), tmp_path,
             )
 
-            result = self._run_process(cmd, timeout=timeout)
+            result = self._run_process(cmd, timeout=timeout, cwd=cwd, env=env)
 
             if result.returncode != 0:
                 self._handle_error(result)

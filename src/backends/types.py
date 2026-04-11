@@ -27,6 +27,8 @@ class CallOptions:
     max_turns: int = 10
     max_budget_usd: float = 0.0
     json_schema: dict[str, Any] | None = None
+    working_directory: str = ""
+    sanitize_environment: bool = False
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,8 @@ class BackendCapabilities:
         supports_budget_cap: Can pass per-call USD budget limits.
         supports_rate_limit_detection: Has proactive rate limit backoff.
         supports_tools: Can use agent tools (WebSearch, etc.).
+        supports_isolated_context: Can reliably run from an isolated working
+            directory with a sanitized environment in this framework's setup.
         default_model: Model to use when the config model is a Claude
             shortname (e.g. ``"sonnet"``) that this backend doesn't understand.
     """
@@ -61,6 +65,7 @@ class BackendCapabilities:
     supports_budget_cap: bool = False
     supports_rate_limit_detection: bool = False
     supports_tools: bool = True
+    supports_isolated_context: bool = True
     default_model: str = ""
 
 

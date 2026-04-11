@@ -44,6 +44,17 @@ class FakeBackend(Backend):
         return AgentResponse(text="fake response", cost_usd=0.01, is_error=False)
 
 
+class CapturingBackend(FakeBackend):
+    name = "capturing"
+
+    def __init__(self):
+        self.last_opts = None
+
+    def invoke(self, prompt, opts, timeout=300):
+        self.last_opts = opts
+        return AgentResponse(text="captured", cost_usd=0.0, is_error=False)
+
+
 # Remove from registry to avoid polluting other tests
 if "fake" in Backend.__dict__.get("_REGISTRY", {}):
     del Backend._REGISTRY["fake"]
@@ -210,6 +221,70 @@ class TestAutoResearcherSetup:
         assert "lightweight mode: truncated knowledge base" in prompt.lower()
         assert "| Iter | Dimension | Score | Status |" not in prompt
         assert "- Iter 001: Developer experience" in prompt
+
+    def test_call_with_uses_isolated_backend_context_by_default(self, tmp_path):
+        backend = CapturingBackend()
+        cfg = ResearchConfig(
+            topic="Test topic",
+            goal="Test goal",
+            dimensions=("Dim A",),
+            scoring=ScoringConfig(),
+            execution=ExecutionConfig(
+                backend="claude",
+                model="sonnet",
+                isolate_backend_context=True,
+                sanitize_backend_env=True,
+            ),
+        )
+        researcher = AutoResearcher(config=cfg, backend=backend, output_dir=tmp_path / "output")
+        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher._setup()
+        researcher._call_with(backend, "hello")
+        assert backend.last_opts is not None
+        assert backend.last_opts.sanitize_environment is True
+        assert backend.last_opts.working_directory
+        assert "autoresearch-backend-" in backend.last_opts.working_directory
+
+    def test_call_with_skips_isolation_for_incompatible_backend(self, tmp_path):
+        from src.backends.claude import ClaudeBackend
+
+        backend = ClaudeBackend()
+        cfg = ResearchConfig(
+            topic="Test topic",
+            goal="Test goal",
+            dimensions=("Dim A",),
+            scoring=ScoringConfig(),
+            execution=ExecutionConfig(
+                backend="claude",
+                model="sonnet",
+                isolate_backend_context=True,
+                sanitize_backend_env=True,
+            ),
+        )
+        researcher = AutoResearcher(config=cfg, backend=backend, output_dir=tmp_path / "output")
+
+        captured = {}
+
+        def fake_run(cmd, *, input=None, timeout=300, cwd=None, env=None):
+            captured["cwd"] = cwd
+            captured["env"] = env
+            from subprocess import CompletedProcess
+
+            return CompletedProcess(args=cmd, returncode=0, stdout='{"result":"ok","cost_usd":0.0}', stderr="")
+
+        with patch.object(ClaudeBackend, "_resolve_executable", return_value="claude"), \
+             patch.object(ClaudeBackend, "_run_process", side_effect=fake_run), \
+             patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
+             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
+             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+            researcher._setup()
+            resp = researcher._call_with(backend, "hello")
+
+        assert resp.is_error is False
+        assert captured["cwd"] is None
+        assert captured["env"] is None
 
     def test_score_findings_prompt_mentions_short_goal_constraints(self, researcher):
         researcher.config = ResearchConfig(
