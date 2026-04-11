@@ -86,7 +86,8 @@ def test_sanitized_env_keep_list_is_case_insensitive(monkeypatch):
     assert matched.get("COMSPEC") == "C:\\Windows\\system32\\cmd.exe"
 
 
-def test_orchestrator_isolates_compatible_backends(tmp_path):
+def test_orchestrator_isolates_when_enabled(tmp_path):
+    """When isolate_backend_context=True, every backend gets isolation."""
     backend = StubBackend()
     cfg = ResearchConfig(
         topic="Topic",
@@ -103,33 +104,21 @@ def test_orchestrator_isolates_compatible_backends(tmp_path):
 
     from src.backends.claude import ClaudeBackend
 
-    # Claude now supports isolation (SYSTEMROOT fix in ce681e5 resolved the
-    # DNS crash that originally forced the opt-out in cc021e7).
-    claude = ClaudeBackend()
-    assert researcher._should_isolate_backend(claude) is True
+    assert researcher._should_isolate_backend(ClaudeBackend()) is True
 
 
-def test_orchestrator_respects_incompatible_capability_flag(tmp_path):
-    """Backends that declare supports_isolated_context=False must not be
-    isolated, even when isolation is enabled in the execution config.
-    """
-    from src.backends.types import BackendCapabilities
-
-    class IncompatibleBackend(StubBackend):
-        name = "stub-incompatible"
-        capabilities = BackendCapabilities(supports_isolated_context=False)
-
+def test_orchestrator_skips_isolation_when_disabled(tmp_path):
+    """When isolate_backend_context=False, no backend gets isolation."""
+    backend = StubBackend()
     cfg = ResearchConfig(
         topic="Topic",
         goal="Goal",
         dimensions=("DX",),
         scoring=ScoringConfig(),
         execution=ExecutionConfig(
-            isolate_backend_context=True,
-            sanitize_backend_env=True,
+            isolate_backend_context=False,
+            sanitize_backend_env=False,
         ),
     )
-    researcher = AutoResearcher(
-        config=cfg, backend=IncompatibleBackend(), output_dir=tmp_path / "output"
-    )
-    assert researcher._should_isolate_backend(IncompatibleBackend()) is False
+    researcher = AutoResearcher(config=cfg, backend=backend, output_dir=tmp_path / "output")
+    assert researcher._should_isolate_backend(backend) is False

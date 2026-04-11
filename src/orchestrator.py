@@ -851,10 +851,7 @@ class AutoResearcher:
 
     def _should_isolate_backend(self, backend: Backend) -> bool:
         """Return True when backend-context isolation should be applied."""
-        return (
-            self.config.execution.isolate_backend_context
-            and backend.capabilities.supports_isolated_context
-        )
+        return self.config.execution.isolate_backend_context
 
     def _is_lightweight_mode(self) -> bool:
         """Return True when the run should optimize for brevity and low overhead."""

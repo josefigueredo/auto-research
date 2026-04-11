@@ -247,16 +247,16 @@ class TestAutoResearcherSetup:
         assert backend.last_opts.working_directory
         assert "autoresearch-backend-" in backend.last_opts.working_directory
 
-    def test_call_with_skips_isolation_for_incompatible_backend(self, tmp_path):
-        """Backends that declare supports_isolated_context=False must receive
-        cwd=None and env=None from _call_with even when isolation is enabled.
+    def test_call_with_skips_isolation_when_disabled_in_config(self, tmp_path):
+        """When isolate_backend_context=False, _call_with must pass cwd=None
+        and env=None to the subprocess runner.
         """
         from src.backends.base import Backend, PromptMode
         from src.backends.types import AgentResponse, BackendCapabilities
 
-        class IncompatibleBackend(Backend):
-            name = "stub-incompatible"
-            capabilities = BackendCapabilities(supports_isolated_context=False)
+        class PlainBackend(Backend):
+            name = "stub-plain"
+            capabilities = BackendCapabilities()
 
             def cli_executable(self) -> str:
                 return "stub"
@@ -273,7 +273,7 @@ class TestAutoResearcherSetup:
             def check_available(self) -> bool:
                 return True
 
-        backend = IncompatibleBackend()
+        backend = PlainBackend()
         cfg = ResearchConfig(
             topic="Test topic",
             goal="Test goal",
@@ -282,8 +282,8 @@ class TestAutoResearcherSetup:
             execution=ExecutionConfig(
                 backend="claude",
                 model="sonnet",
-                isolate_backend_context=True,
-                sanitize_backend_env=True,
+                isolate_backend_context=False,
+                sanitize_backend_env=False,
             ),
         )
         researcher = AutoResearcher(config=cfg, backend=backend, output_dir=tmp_path / "output")
@@ -297,8 +297,8 @@ class TestAutoResearcherSetup:
 
             return CompletedProcess(args=cmd, returncode=0, stdout='{"result":"ok","cost_usd":0.0}', stderr="")
 
-        with patch.object(IncompatibleBackend, "_resolve_executable", return_value="stub"), \
-             patch.object(IncompatibleBackend, "_run_process", side_effect=fake_run), \
+        with patch.object(PlainBackend, "_resolve_executable", return_value="stub"), \
+             patch.object(PlainBackend, "_run_process", side_effect=fake_run), \
              patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
              patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
              patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
