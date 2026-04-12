@@ -99,10 +99,8 @@ def test_score_research_rubric():
     assert rubric["summary"]["synthesis_claim_count"] == len(claims)
 
 
-def test_score_research_rubric_same_scoring_regardless_of_content_length():
-    """The rubric uses one scoring path — short outputs are not graded
-    more leniently than long ones.  Same claims/citations → same score.
-    """
+def test_score_research_rubric_no_lightweight_mode_in_output():
+    """The rubric no longer has a lightweight_mode key in its summary."""
     text = """
     - Python is beginner-friendly. High confidence.
     - Large ecosystem. https://docs.python.org/3/
@@ -112,6 +110,90 @@ def test_score_research_rubric_same_scoring_regardless_of_content_length():
     citations = extract_citations(text, scope="synthesis", retrieved_at="2026-04-09T00:00:00Z")
     links = link_claims_to_citations(claims, citations)
     rubric = score_research_rubric(claims, citations, links, contradictions=[])
-    assert rubric["overall_score"] >= 0.0
-    assert rubric["grade"] in {"strong", "good", "developing", "insufficient"}
     assert "lightweight_mode" not in rubric["summary"]
+
+
+# ---------------------------------------------------------------------------
+# Rubric calibration controls
+#
+# These fixtures pin the rubric's behavior against known-good, known-bad,
+# and mediocre inputs.  If a threshold or target changes, one of these
+# tests should break — that's the point.
+# ---------------------------------------------------------------------------
+
+_GOOD_SYNTHESIS = """
+- Python's readability leads to 40% faster onboarding for junior developers. High confidence. [Stack Overflow 2024](https://survey.stackoverflow.co/2024)
+- PyPI hosts 550,000+ packages as of April 2026. High confidence. [PyPI Stats](https://pypi.org/stats/)
+- NumPy and pandas dominate data science workflows with 87% adoption. High confidence. [JetBrains Survey](https://www.jetbrains.com/lp/devecosystem-2025/)
+- The GIL limits true CPU parallelism; free-threaded CPython 3.13 is experimental. Medium confidence. [PEP 703](https://peps.python.org/pep-0703/)
+- Cold-start latency on AWS Lambda averages 1.2s for Python vs 0.8s for Go. Medium confidence. [AWS re:Invent benchmarks](https://github.com/aws-samples/lambda-perf)
+- Packaging remains fragmented: pip, poetry, uv, conda compete without a single standard. High confidence. [Python Packaging Authority](https://packaging.python.org/)
+- Type checking via mypy catches ~15% of bugs that would otherwise reach production. Medium confidence. [Dropbox engineering blog](https://dropbox.tech/application/our-journey-to-type-checking-4-million-lines-of-python)
+- Recommendation: use Python for prototyping and data pipelines where time-to-first-result matters most.
+- Recommendation: avoid Python for latency-sensitive microservices unless you can absorb 3-5x compute cost vs Go.
+- Recommendation: adopt uv as the packaging tool for new projects.
+- Supply chain risk is elevated: PyPI had 12 critical malware incidents in Q1 2026. Low confidence. [Phylum blog](https://blog.phylum.io/)
+- Django and FastAPI are production-ready for web APIs with mature async support. High confidence. [TechEmpower benchmarks](https://www.techempower.com/benchmarks/)
+"""
+
+_BAD_SYNTHESIS = """
+- Python is a popular programming language.
+- It is used in many industries.
+- There are some performance concerns.
+- The ecosystem has many libraries.
+- Packaging can be difficult sometimes.
+- Some people prefer other languages for certain tasks.
+- The community is large and active.
+- Python is good for beginners.
+"""
+
+_MEDIOCRE_SYNTHESIS = """
+- Python is readable and has clean syntax.
+- PyPI has over 500k packages. https://pypi.org/
+- The GIL is a known limitation for CPU-bound work.
+- Cold starts on Lambda are slower than Go. Medium confidence.
+- Packaging is fragmented across pip, poetry, and conda.
+- Django is a mature web framework. https://www.djangoproject.com/
+- Recommendation: consider Python for rapid prototyping.
+- Type checking adoption remains uneven across the ecosystem.
+- Python 3.13 introduces experimental free-threading. https://docs.python.org/3.13/
+- The language is widely used in machine learning.
+"""
+
+
+def _rubric_for(text):
+    claims = extract_claims(text, scope="synthesis", dimension="DX")
+    citations = extract_citations(text, scope="synthesis", retrieved_at="2026-04-10T00:00:00Z")
+    links = link_claims_to_citations(claims, citations)
+    return score_research_rubric(claims, citations, links, contradictions=[])
+
+
+def test_rubric_calibration_good_scores_strong():
+    """Well-cited synthesis with confidence labels and recommendations
+    should score 'strong' (>= 0.8).
+    """
+    rubric = _rubric_for(_GOOD_SYNTHESIS)
+    assert rubric["grade"] == "strong", f"expected strong, got {rubric['grade']} ({rubric['overall_score']})"
+    assert rubric["overall_score"] >= 0.8
+    assert rubric["dimensions"]["citation_coverage"] >= 0.6
+    assert rubric["dimensions"]["actionability"] >= 0.8
+
+
+def test_rubric_calibration_bad_scores_insufficient():
+    """Vague, uncited synthesis with no labels should score 'insufficient'
+    (< 0.4).
+    """
+    rubric = _rubric_for(_BAD_SYNTHESIS)
+    assert rubric["grade"] == "insufficient", f"expected insufficient, got {rubric['grade']} ({rubric['overall_score']})"
+    assert rubric["overall_score"] < 0.4
+    assert rubric["dimensions"]["citation_coverage"] == 0.0
+    assert rubric["dimensions"]["source_diversity"] == 0.0
+
+
+def test_rubric_calibration_mediocre_scores_developing():
+    """Partially cited synthesis with some labels should score 'developing'
+    (>= 0.4 and < 0.6).
+    """
+    rubric = _rubric_for(_MEDIOCRE_SYNTHESIS)
+    assert rubric["grade"] == "developing", f"expected developing, got {rubric['grade']} ({rubric['overall_score']})"
+    assert 0.4 <= rubric["overall_score"] < 0.6

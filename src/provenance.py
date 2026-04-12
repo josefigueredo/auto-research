@@ -293,12 +293,28 @@ def score_research_rubric(
 ) -> dict[str, Any]:
     """Score research quality from run artifacts.
 
-    Uses the same targets and weights regardless of run mode.  A short
-    bullet-point answer with zero citations scores the same as a long
-    report with zero citations — both are poorly grounded.  Whether the
-    user *cares* about a low score on a smoke test is their call, but the
-    rubric reports honestly in every case.
+    Uses the same targets regardless of run mode.  A short bullet-point
+    answer with zero citations scores the same as a long report with zero
+    citations — both are poorly grounded.
+
+    Dimension targets and their rationale:
+
+    - **citation_coverage** = cited_claims / n_claims.  Every claim ideally
+      has a citation.  0.50 means half the claims are grounded.
+    - **source_diversity** = unique_source_types / 3.  Three distinct source
+      types (e.g. docs, github, blog) is the bar for diversity.
+    - **uncertainty_reporting** = labeled_claims / ceil(n_claims * 0.25).
+      Not every claim needs a confidence label — definitional statements
+      ("Python uses dynamic typing") are implicitly certain.  Labeling 25%
+      of claims (the quantitative / comparative / uncertain ones) maxes out.
+    - **actionability** = recommendations / ceil(n_claims * 0.15).  A report
+      where 15% of claims are explicit recommendations is fully actionable.
+      Not every observation is a recommendation.
+    - **contradiction_handling** = 1.0 − contradictions / n_claims.
+    - **evidence_quality** = mean quality score from evidence links.
     """
+    import math
+
     synthesis_claims = [claim for claim in claims if claim.get("scope") == "synthesis"]
     if not synthesis_claims:
         return {
@@ -347,10 +363,12 @@ def score_research_rubric(
 
     confidence_labels = [str(claim.get("confidence", "unlabeled")) for claim in synthesis_claims]
     labeled = [label for label in confidence_labels if label != "unlabeled"]
-    uncertainty_reporting = len(labeled) / n_claims if n_claims else 0.0
+    uncertainty_target = max(1, math.ceil(n_claims * 0.25))
+    uncertainty_reporting = min(1.0, len(labeled) / uncertainty_target) if n_claims else 0.0
 
     recommendation_count = sum(1 for claim in synthesis_claims if claim.get("claim_type") == "recommendation")
-    actionability = recommendation_count / n_claims if n_claims else 0.0
+    actionability_target = max(1, math.ceil(n_claims * 0.15))
+    actionability = min(1.0, recommendation_count / actionability_target) if n_claims else 0.0
 
     contradiction_handling = max(0.0, 1.0 - min(1.0, len(synthesis_contradictions) / max(1, n_claims)))
 

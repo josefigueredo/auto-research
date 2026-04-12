@@ -114,8 +114,16 @@ def trim_to_word_limit(text: str, word_limit: int) -> str:
     return trimmed
 
 
-def coerce_to_bullets(text: str) -> str:
-    """Convert paragraphs/sentences into compact bullet lines."""
+_MAX_COERCED_BULLETS = 6
+
+
+def coerce_to_bullets(text: str, *, max_bullets: int = _MAX_COERCED_BULLETS) -> str:
+    """Convert paragraphs/sentences into compact bullet lines.
+
+    When the input already contains bullet lines (``-`` or ``*`` prefixed),
+    they are preserved as-is.  Otherwise, sentences are split and capped at
+    *max_bullets* to keep the output concise.
+    """
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     bullets = [line for line in lines if line.startswith(("- ", "* "))]
     if bullets:
@@ -126,7 +134,7 @@ def coerce_to_bullets(text: str) -> str:
     compact = [part.strip(" -") for part in sentence_parts if part.strip()]
     if not compact:
         compact = [cleaned]
-    compact = compact[:6]
+    compact = compact[:max_bullets]
     return "\n".join(f"- {part}" for part in compact if part)
 
 
