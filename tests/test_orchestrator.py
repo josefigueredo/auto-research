@@ -973,12 +973,12 @@ class TestAutoResearcherHelpers:
             ResearchCandidate(findings="short but strong", backend_name="codex", cost_usd=0.1),
         ]
 
-        def fake_score(dimension, findings):
+        def fake_score(ctx, state, dimension, findings):
             if findings == "long but weak":
                 return IterationScore(total=40.0)
             return IterationScore(total=85.0)
 
-        with patch.object(researcher, "_score", side_effect=fake_score):
+        with patch("src.research_loop._score", side_effect=fake_score):
             selected = researcher._select_candidate_findings("Dim A", candidates)
 
         assert selected == "short but strong"
@@ -1007,10 +1007,10 @@ class TestAutoResearcherHelpers:
             ResearchCandidate(findings="finding B", backend_name="codex", cost_usd=0.1),
         ]
 
-        def fake_score(dimension, findings):
+        def fake_score(ctx, state, dimension, findings):
             return IterationScore(total=75.0 if findings == "finding A" else 50.0)
 
-        with patch.object(researcher, "_score", side_effect=fake_score):
+        with patch("src.research_loop._score", side_effect=fake_score):
             selected = researcher._select_candidate_findings("Dim A", candidates)
 
         assert "finding A" in selected
@@ -1019,7 +1019,7 @@ class TestAutoResearcherHelpers:
     def test_generate_hypothesis_includes_discovered_dimensions(self, researcher):
         researcher.discovered_dimensions.append("New Gap")
         researcher.explored_dimensions.append("Dim A")
-        with patch("src.orchestrator._render") as mock_render, \
+        with patch("src.research_loop._render") as mock_render, \
              patch.object(researcher, "_call_with", return_value=AgentResponse(
                  text=json.dumps({"dimension": "New Gap", "questions": [], "approach": ""}),
                  cost_usd=0.0,
@@ -1076,8 +1076,8 @@ class TestAutoResearcherHelpers:
                 return None
 
         researcher.strategy = FakeStrategy()
-        with patch("src.orchestrator._render", return_value="prompt"), \
-             patch.object(researcher, "_select_candidate_findings", return_value="candidate b"):
+        with patch("src.research_loop._render", return_value="prompt"), \
+             patch("src.research_loop._select_candidate_findings", return_value="candidate b"):
             findings = researcher._execute_research("Dim A", [], "")
 
         assert findings == "candidate b"
