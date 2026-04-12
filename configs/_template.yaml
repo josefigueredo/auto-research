@@ -55,8 +55,8 @@ research:
     backend: claude         # "claude", "codex", "gemini", or "copilot"
     model: sonnet           # model name (backend-specific, see below)
     lightweight_mode: false # Prefer shorter prompts/artifacts and stricter short-goal obedience
-    isolate_backend_context: true # Prefer neutral temp-dir backend runs; applied only to compatible backends
-    sanitize_backend_env: true    # Prefer reduced env inheritance; also applied only to compatible backends
+    isolate_backend_context: true # Run backend CLIs from a neutral temp dir to avoid repo/skill/MCP leakage
+    sanitize_backend_env: true    # Pass a reduced subprocess environment (PATH, HOME, API keys, ...)
 
     # ---------------------------------------------------------------
     # Multi-backend strategies (optional — omit for single-backend)

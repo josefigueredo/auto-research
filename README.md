@@ -15,9 +15,9 @@ The project now includes:
 - score-based multi-candidate adjudication for ensemble/parallel strategies
 - discovered-dimension queueing with resume persistence
 - per-backend cost/token accounting
-- backend-aware isolated working directories + sanitized subprocess env for
-  compatible backends, to reduce accidental repo/skill/plugin/MCP context
-  leakage into research calls without breaking incompatible CLIs
+- isolated working directories + sanitized subprocess env, controlled by
+  execution config, to reduce accidental repo/skill/plugin/MCP context
+  leakage into research calls
 - reproducibility artifacts (`run_manifest.json`, `metrics.json`, `methods.md`)
 - lightweight academic/provenance artifacts (`claims.json`, `citations.json`,
   `evidence_links.json`, `evidence_quality.json`, `contradictions.json`)
