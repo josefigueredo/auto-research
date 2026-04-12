@@ -25,9 +25,12 @@ from .artifacts import (
     load_json_if_exists,
     metrics_payload,
     package_version,
-    pdf_run_summary_text,
     run_manifest_payload,
     should_write_evaluation,
+    write_dashboard,
+    write_html_report,
+    write_pdf_report,
+    write_portfolio,
 )
 from .config import ResearchConfig
 from .constraints import (
@@ -50,7 +53,7 @@ from .provenance import (
 from .prompts import render as _render
 from .pdf_report import render_simple_pdf
 from .portfolio import build_portfolio, render_portfolio_html
-from .reporting import render_html_report
+from .reporting import render_html_report as render_html_report_fn
 from .run_io import append_result_row, build_result_row, setup_output_dir, write_iteration_markdown, write_results_header
 from .run_state import UsageTotals, maybe_exhaust_dimension, merge_findings, resume_state, track_candidate_usage, track_cost, track_usage
 from .scorer import (
@@ -1104,114 +1107,29 @@ class AutoResearcher:
         )
 
     def _write_html_report(self) -> None:
-        """Render a standalone HTML report when enabled."""
-        if not self.config.reporting.export_html:
-            return
-
-        manifest = load_json_if_exists(self.manifest_path, {})
-        metrics = load_json_if_exists(self.metrics_path, {})
-        evidence_quality = load_json_if_exists(self.evidence_quality_path, {})
-        rubric = load_json_if_exists(self.rubric_path, {})
-        evaluation = load_json_if_exists(self.evaluation_path, None)
-        comparison = load_json_if_exists(self.comparison_path, None)
-        semantic_calibration = load_json_if_exists(self.semantic_calibration_path, None)
-        semantic_review = load_json_if_exists(self.semantic_review_path, None)
-        dashboard = load_json_if_exists(self.dashboard_path, None)
-        methods_text = self.methods_path.read_text(encoding="utf-8") if self.methods_path.exists() else ""
-        synthesis_text = self.synthesis_path.read_text(encoding="utf-8") if self.synthesis_path.exists() else ""
-        title = self.config.reporting.report_title or f"Autoresearch Report — {self.config.topic}"
-        html = render_html_report(
-            title=title,
-            topic=self.config.topic,
-            goal=self.config.goal,
-            manifest=manifest,
-            metrics=metrics,
-            evidence_quality=evidence_quality,
-            rubric=rubric,
-            evaluation=evaluation,
-            comparison=comparison,
-            semantic_calibration=semantic_calibration,
-            semantic_review=semantic_review,
-            dashboard=dashboard,
-            methods_text=methods_text,
-            synthesis_text=synthesis_text,
-        )
-        self.report_html_path.write_text(html, encoding="utf-8")
+        write_html_report(self.output_dir, config=self.config, render_fn=render_html_report_fn)
 
     def _write_pdf_report(self) -> None:
-        """Render a simple PDF report when enabled."""
-        if not self.config.reporting.export_pdf:
-            return
-
-        title = self.config.reporting.report_title or f"Autoresearch Report — {self.config.topic}"
-        metrics = load_json_if_exists(self.metrics_path, {})
-        rubric = load_json_if_exists(self.rubric_path, {})
-        evidence_quality = load_json_if_exists(self.evidence_quality_path, {})
-        evaluation = load_json_if_exists(self.evaluation_path, {})
-        dashboard = load_json_if_exists(self.dashboard_path, {})
-        methods_text = self.methods_path.read_text(encoding="utf-8") if self.methods_path.exists() else ""
-        synthesis_text = self.synthesis_path.read_text(encoding="utf-8") if self.synthesis_path.exists() else ""
-        sections = [
-            (
-                "Run Summary",
-                pdf_run_summary_text(
-                    topic=self.config.topic,
-                    goal=self.config.goal,
-                    strategy=self.config.execution.strategy,
-                    best_score=self.best_score,
-                    iteration=self.iteration,
-                    explored_dimensions=self.explored_dimensions,
-                    metrics=metrics,
-                    rubric=rubric,
-                    evidence_quality=evidence_quality,
-                ),
-            ),
-            ("Methods", methods_text),
-            ("Synthesis", synthesis_text),
-            ("Dashboard", json.dumps(dashboard, indent=2)),
-            ("Evaluation", json.dumps(evaluation, indent=2)),
-        ]
-        self.report_pdf_path.write_bytes(render_simple_pdf(title, sections))
-
-    def _write_dashboard_artifact(self) -> None:
-        """Write a stakeholder-friendly summary dashboard artifact."""
-        rubric = load_json_if_exists(self.rubric_path, {})
-        evidence_quality = load_json_if_exists(self.evidence_quality_path, {})
-        comparison = load_json_if_exists(self.comparison_path, {})
-        evaluation = load_json_if_exists(self.evaluation_path, {})
-        strategy_summary = load_json_if_exists(self.strategy_summary_path, {})
-        semantic_calibration = load_json_if_exists(self.semantic_calibration_path, {})
-        semantic_review = load_json_if_exists(self.semantic_review_path, {})
-
-        payload = dashboard_payload(
-            topic=self.config.topic,
-            goal=self.config.goal,
-            benchmark_id=self.config.evaluation.benchmark_id,
-            current_strategy=self.config.execution.strategy,
+        write_pdf_report(
+            self.output_dir,
+            config=self.config,
             best_score=self.best_score,
             iteration=self.iteration,
             explored_dimensions=self.explored_dimensions,
-            rubric=rubric,
-            evidence_quality=evidence_quality,
-            comparison=comparison,
-            evaluation=evaluation,
-            strategy_summary=strategy_summary,
-            semantic_calibration=semantic_calibration,
-            semantic_review=semantic_review,
+            render_pdf_fn=render_simple_pdf,
         )
-        self.dashboard_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def _write_dashboard_artifact(self) -> None:
+        write_dashboard(
+            self.output_dir,
+            config=self.config,
+            best_score=self.best_score,
+            iteration=self.iteration,
+            explored_dimensions=self.explored_dimensions,
+        )
 
     def _write_portfolio_artifacts(self) -> None:
-        """Aggregate sibling run dashboards into a portfolio summary."""
-        output_root = self.output_dir.parent
-        if not output_root.exists():
-            return
-        portfolio = build_portfolio(output_root)
-        self.portfolio_path.write_text(json.dumps(portfolio, indent=2), encoding="utf-8")
-        self.portfolio_html_path.write_text(
-            render_portfolio_html("Autoresearch Portfolio", portfolio),
-            encoding="utf-8",
-        )
+        write_portfolio(self.output_dir, build_portfolio, render_portfolio_html)
 
     def _semantic_review(
         self,

@@ -272,3 +272,152 @@ def package_version() -> str | None:
         return importlib.metadata.version("autoresearch")
     except importlib.metadata.PackageNotFoundError:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Artifact writers — standalone functions that load from disk and write output
+# ---------------------------------------------------------------------------
+
+
+def write_html_report(
+    output_dir: Path,
+    *,
+    config: Any,
+    render_fn: Any,
+) -> None:
+    """Render a standalone HTML report when enabled in config.
+
+    Args:
+        output_dir: Run output directory containing artifact JSON files.
+        config: The ``ResearchConfig`` for this run.
+        render_fn: The ``render_html_report`` function from ``reporting.py``.
+    """
+    if not config.reporting.export_html:
+        return
+
+    manifest = load_json_if_exists(output_dir / "run_manifest.json", {})
+    metrics = load_json_if_exists(output_dir / "metrics.json", {})
+    evidence_quality = load_json_if_exists(output_dir / "evidence_quality.json", {})
+    rubric = load_json_if_exists(output_dir / "rubric.json", {})
+    evaluation = load_json_if_exists(output_dir / "evaluation.json", None)
+    comparison = load_json_if_exists(output_dir / "comparison.json", None)
+    semantic_calibration = load_json_if_exists(output_dir / "semantic_calibration.json", None)
+    semantic_review = load_json_if_exists(output_dir / "semantic_review.json", None)
+    dashboard = load_json_if_exists(output_dir / "dashboard.json", None)
+    methods_path = output_dir / "methods.md"
+    synthesis_path = output_dir / "synthesis.md"
+    methods_text = methods_path.read_text(encoding="utf-8") if methods_path.exists() else ""
+    synthesis_text = synthesis_path.read_text(encoding="utf-8") if synthesis_path.exists() else ""
+    title = config.reporting.report_title or f"Autoresearch Report — {config.topic}"
+    html = render_fn(
+        title=title,
+        topic=config.topic,
+        goal=config.goal,
+        manifest=manifest,
+        metrics=metrics,
+        evidence_quality=evidence_quality,
+        rubric=rubric,
+        evaluation=evaluation,
+        comparison=comparison,
+        semantic_calibration=semantic_calibration,
+        semantic_review=semantic_review,
+        dashboard=dashboard,
+        methods_text=methods_text,
+        synthesis_text=synthesis_text,
+    )
+    (output_dir / "report.html").write_text(html, encoding="utf-8")
+
+
+def write_pdf_report(
+    output_dir: Path,
+    *,
+    config: Any,
+    best_score: float,
+    iteration: int,
+    explored_dimensions: list[str],
+    render_pdf_fn: Any,
+) -> None:
+    """Render a simple PDF report when enabled in config."""
+    if not config.reporting.export_pdf:
+        return
+
+    title = config.reporting.report_title or f"Autoresearch Report — {config.topic}"
+    metrics = load_json_if_exists(output_dir / "metrics.json", {})
+    rubric = load_json_if_exists(output_dir / "rubric.json", {})
+    evidence_quality = load_json_if_exists(output_dir / "evidence_quality.json", {})
+    evaluation = load_json_if_exists(output_dir / "evaluation.json", {})
+    dashboard = load_json_if_exists(output_dir / "dashboard.json", {})
+    methods_path = output_dir / "methods.md"
+    synthesis_path = output_dir / "synthesis.md"
+    methods_text = methods_path.read_text(encoding="utf-8") if methods_path.exists() else ""
+    synthesis_text = synthesis_path.read_text(encoding="utf-8") if synthesis_path.exists() else ""
+    sections = [
+        (
+            "Run Summary",
+            pdf_run_summary_text(
+                topic=config.topic,
+                goal=config.goal,
+                strategy=config.execution.strategy,
+                best_score=best_score,
+                iteration=iteration,
+                explored_dimensions=explored_dimensions,
+                metrics=metrics,
+                rubric=rubric,
+                evidence_quality=evidence_quality,
+            ),
+        ),
+        ("Methods", methods_text),
+        ("Synthesis", synthesis_text),
+        ("Dashboard", json.dumps(dashboard, indent=2)),
+        ("Evaluation", json.dumps(evaluation, indent=2)),
+    ]
+    (output_dir / "report.pdf").write_bytes(render_pdf_fn(title, sections))
+
+
+def write_dashboard(
+    output_dir: Path,
+    *,
+    config: Any,
+    best_score: float,
+    iteration: int,
+    explored_dimensions: list[str],
+) -> None:
+    """Write a stakeholder-friendly summary dashboard artifact."""
+    rubric = load_json_if_exists(output_dir / "rubric.json", {})
+    evidence_quality = load_json_if_exists(output_dir / "evidence_quality.json", {})
+    comparison = load_json_if_exists(output_dir / "comparison.json", {})
+    evaluation = load_json_if_exists(output_dir / "evaluation.json", {})
+    strategy_summary = load_json_if_exists(output_dir / "strategy_summary.json", {})
+    semantic_calibration = load_json_if_exists(output_dir / "semantic_calibration.json", {})
+    semantic_review = load_json_if_exists(output_dir / "semantic_review.json", {})
+
+    payload = dashboard_payload(
+        topic=config.topic,
+        goal=config.goal,
+        benchmark_id=config.evaluation.benchmark_id,
+        current_strategy=config.execution.strategy,
+        best_score=best_score,
+        iteration=iteration,
+        explored_dimensions=explored_dimensions,
+        rubric=rubric,
+        evidence_quality=evidence_quality,
+        comparison=comparison,
+        evaluation=evaluation,
+        strategy_summary=strategy_summary,
+        semantic_calibration=semantic_calibration,
+        semantic_review=semantic_review,
+    )
+    (output_dir / "dashboard.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def write_portfolio(output_dir: Path, portfolio_fn: Any, portfolio_html_fn: Any) -> None:
+    """Aggregate sibling run dashboards into a portfolio summary."""
+    output_root = output_dir.parent
+    if not output_root.exists():
+        return
+    portfolio = portfolio_fn(output_root)
+    (output_dir.parent / "portfolio.json").write_text(json.dumps(portfolio, indent=2), encoding="utf-8")
+    (output_dir.parent / "portfolio.html").write_text(
+        portfolio_html_fn("Autoresearch Portfolio", portfolio),
+        encoding="utf-8",
+    )
