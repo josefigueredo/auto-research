@@ -859,9 +859,6 @@ class AutoResearcher:
             explicit_enabled=self.config.execution.lightweight_mode,
             goal=self.config.goal,
             topic=self.config.topic,
-            dimensions_count=len(self.config.dimensions),
-            max_iterations=self.config.execution.max_iterations,
-            allowed_tools=self.config.execution.allowed_tools,
         )
 
     def _goal_constraints_summary(self) -> str:

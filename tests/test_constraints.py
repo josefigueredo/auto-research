@@ -17,21 +17,29 @@ from src.constraints import (
 
 def test_is_lightweight_goal_and_mode():
     assert is_lightweight_goal("Provide a bullet-point list under 100 words")
+    # Goal-phrase detection triggers even without explicit flag
     assert is_lightweight_mode(
         explicit_enabled=False,
         goal="Brief answer under 100 words",
         topic="Python",
-        dimensions_count=4,
-        max_iterations=5,
-        allowed_tools="WebSearch",
     )
-    assert is_lightweight_mode(
+    # Normal goal without explicit flag → not lightweight
+    assert not is_lightweight_mode(
         explicit_enabled=False,
         goal="Normal goal",
         topic="Topic",
-        dimensions_count=2,
-        max_iterations=1,
-        allowed_tools="",
+    )
+    # Explicit flag overrides regardless of goal text
+    assert is_lightweight_mode(
+        explicit_enabled=True,
+        goal="Full detailed report",
+        topic="Topic",
+    )
+    # Framework-internal terms must NOT auto-activate lightweight mode
+    assert not is_lightweight_mode(
+        explicit_enabled=False,
+        goal="Run a smoke test comparing Python to Go",
+        topic="Topic",
     )
 
 

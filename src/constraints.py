@@ -18,8 +18,6 @@ LIGHTWEIGHT_GOAL_PHRASES = (
     "bullet point list",
     "brief answer",
     "short answer",
-    "smoke test",
-    "sanity check",
 )
 
 
@@ -34,18 +32,23 @@ def is_lightweight_mode(
     explicit_enabled: bool,
     goal: str,
     topic: str,
-    dimensions_count: int,
-    max_iterations: int,
-    allowed_tools: str,
 ) -> bool:
-    """Return True when the run should optimize for brevity and low overhead."""
+    """Return True when the run should optimize for brevity and low overhead.
+
+    Lightweight mode activates in two cases:
+    1. The config explicitly sets ``lightweight_mode: true``.
+    2. The goal text contains a user-facing brevity phrase (e.g.
+       "under 100 words", "bullet-point list").
+
+    Run size (iteration count, dimension count, tool availability) does NOT
+    auto-activate lightweight mode — a 1-iteration run with a long-form goal
+    should produce long-form output.
+    """
     if explicit_enabled:
         return True
 
     goal_text = f"{goal} {topic}".lower()
-    short_goal = is_lightweight_goal(goal_text)
-    small_run = dimensions_count <= 2 and max_iterations in {0, 1} and not allowed_tools
-    return short_goal or small_run
+    return is_lightweight_goal(goal_text)
 
 
 def goal_constraints_summary(goal: str, *, lightweight_mode: bool) -> str:
