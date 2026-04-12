@@ -934,6 +934,7 @@ class AutoResearcher:
         print("=" * 60)
         print(f"  Strategy:    {self.strategy.describe()}")
         print(f"  Topic:       {self.config.topic}")
+        print()
         print(f"  Iterations:  {self.iteration}")
         print(f"  Best score:  {self.best_score:.1f}")
         print(f"  Total cost:  ${self.total_cost:.3f}")
@@ -945,10 +946,31 @@ class AutoResearcher:
                 tok = self.per_backend_tokens.get(name, {"input": 0, "output": 0})
                 print(f"    {name}: {tok['input']:,} in / {tok['output']:,} out (${cost:.3f})")
         print(f"  Dimensions:  {len(self.explored_dimensions)} explored")
+        self._print_rubric_summary()
         print(f"  Results:     {self.results_path}")
         if self.synthesis_path.exists():
             print(f"  Synthesis:   {self.synthesis_path}")
         print("=" * 60)
+
+    def _print_rubric_summary(self) -> None:
+        """Print rubric grade in the completion banner if available."""
+        from .artifacts import load_json_if_exists
+
+        rubric = load_json_if_exists(self.rubric_path, {})
+        if not rubric:
+            return
+        grade = rubric.get("grade", "?")
+        score = rubric.get("overall_score", 0.0)
+        dims = rubric.get("dimensions", {})
+        print()
+        print(f"  Rubric:      {grade} ({score:.2f})")
+        print(f"    evidence_quality:      {dims.get('evidence_quality', 0):.2f}")
+        print(f"    citation_coverage:     {dims.get('citation_coverage', 0):.2f}")
+        print(f"    source_diversity:      {dims.get('source_diversity', 0):.2f}")
+        print(f"    uncertainty_reporting: {dims.get('uncertainty_reporting', 0):.2f}")
+        print(f"    actionability:         {dims.get('actionability', 0):.2f}")
+        print(f"    contradiction_handling:{dims.get('contradiction_handling', 0):.2f}")
+        print()
 
     def _finalize_run_artifacts(self) -> None:
         """Write final manifest and metrics artifacts."""
