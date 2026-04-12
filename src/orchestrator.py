@@ -1020,8 +1020,6 @@ class AutoResearcher:
             self._citations,
             evidence_links,
             contradictions,
-            goal=self.config.goal,
-            lightweight_mode=self._is_lightweight_mode(),
         )
         benchmark_summary = self._benchmark_summary()
         reference_comparison = self._reference_run_comparison()

@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .constraints import is_lightweight_goal
 
 _URL_PATTERN = re.compile(r"https?://[^\s)>\]]+")
 _MD_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
@@ -291,12 +290,15 @@ def score_research_rubric(
     citations: list[dict[str, Any]],
     evidence_links: list[dict[str, Any]],
     contradictions: list[dict[str, Any]],
-    *,
-    goal: str = "",
-    lightweight_mode: bool = False,
 ) -> dict[str, Any]:
-    """Produce a lightweight research-quality rubric from run artifacts."""
-    lightweight = lightweight_mode or is_lightweight_goal(goal)
+    """Score research quality from run artifacts.
+
+    Uses the same targets and weights regardless of run mode.  A short
+    bullet-point answer with zero citations scores the same as a long
+    report with zero citations — both are poorly grounded.  Whether the
+    user *cares* about a low score on a smoke test is their call, but the
+    rubric reports honestly in every case.
+    """
     synthesis_claims = [claim for claim in claims if claim.get("scope") == "synthesis"]
     if not synthesis_claims:
         return {
@@ -330,26 +332,27 @@ def score_research_rubric(
         or conflict.get("right_claim_id") in synthesis_claim_ids
     ]
 
+    n_claims = len(synthesis_claims)
+
     average_evidence = (
         sum(float(link.get("evidence_quality_score", 0.0)) for link in synthesis_links) / len(synthesis_links)
         if synthesis_links
         else 0.0
     )
     direct_citation_count = sum(1 for link in synthesis_links if link.get("has_direct_citation"))
-    citation_target = max(1, min(len(synthesis_claims), 2 if lightweight else len(synthesis_claims)))
-    citation_coverage = direct_citation_count / citation_target if synthesis_claims else 0.0
+    citation_coverage = direct_citation_count / n_claims if n_claims else 0.0
+
     source_types = {citation.get("source_type", "web") for citation in synthesis_citations}
-    diversity_target = 1 if lightweight else 3
-    source_diversity = min(1.0, len(source_types) / diversity_target) if source_types else 0.0
+    source_diversity = min(1.0, len(source_types) / 3) if source_types else 0.0
 
     confidence_labels = [str(claim.get("confidence", "unlabeled")) for claim in synthesis_claims]
     labeled = [label for label in confidence_labels if label != "unlabeled"]
-    uncertainty_target = max(1, min(len(synthesis_claims), 2 if lightweight else len(synthesis_claims)))
-    uncertainty_reporting = len(labeled) / uncertainty_target if synthesis_claims else 0.0
+    uncertainty_reporting = len(labeled) / n_claims if n_claims else 0.0
+
     recommendation_count = sum(1 for claim in synthesis_claims if claim.get("claim_type") == "recommendation")
-    actionability_target = max(1, min(len(synthesis_claims), 3 if lightweight else len(synthesis_claims)))
-    actionability = recommendation_count / actionability_target if synthesis_claims else 0.0
-    contradiction_handling = max(0.0, 1.0 - min(1.0, len(synthesis_contradictions) / max(1, len(synthesis_claims))))
+    actionability = recommendation_count / n_claims if n_claims else 0.0
+
+    contradiction_handling = max(0.0, 1.0 - min(1.0, len(synthesis_contradictions) / max(1, n_claims)))
 
     dimensions = {
         "evidence_quality": round(average_evidence, 2),
@@ -359,18 +362,8 @@ def score_research_rubric(
         "actionability": round(min(1.0, actionability), 2),
         "contradiction_handling": round(contradiction_handling, 2),
     }
-    if lightweight:
-        weights = {
-            "evidence_quality": 0.3,
-            "citation_coverage": 0.2,
-            "source_diversity": 0.1,
-            "uncertainty_reporting": 0.1,
-            "actionability": 0.2,
-            "contradiction_handling": 0.1,
-        }
-        overall_score = round(sum(dimensions[key] * weight for key, weight in weights.items()), 2)
-    else:
-        overall_score = round(sum(dimensions.values()) / len(dimensions), 2)
+    overall_score = round(sum(dimensions.values()) / len(dimensions), 2)
+
     if overall_score >= 0.8:
         grade = "strong"
     elif overall_score >= 0.6:
@@ -385,13 +378,12 @@ def score_research_rubric(
         "grade": grade,
         "dimensions": dimensions,
         "summary": {
-            "synthesis_claim_count": len(synthesis_claims),
+            "synthesis_claim_count": n_claims,
             "synthesis_citation_count": len(synthesis_citations),
             "contradiction_count": len(synthesis_contradictions),
             "high_confidence_claims": sum(1 for label in confidence_labels if label == "high"),
             "unresolved_claims": sum(1 for label in confidence_labels if label == "unresolved"),
             "recommendation_claims": recommendation_count,
-            "lightweight_mode": lightweight,
         },
     }
 def _iter_claim_candidates(text: str) -> list[str]:
