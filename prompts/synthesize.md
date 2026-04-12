@@ -46,5 +46,12 @@ When the goal does NOT demand brevity, produce a well-structured report that:
 7. Calls out unresolved questions or weakly-supported claims explicitly.
 8. States contradictions clearly instead of silently collapsing them.
 
-Write for an architect who will use this to make real decisions. Be specific,
-cite numbers and source URLs where available, and avoid generic advice.
+Write for an architect who will use this to make real decisions. Be specific
+and avoid generic advice.
+
+**Citation discipline:** Propagate source URLs from the knowledge base into
+the synthesis as inline markdown links `[source](url)`. Every quantitative
+claim, benchmark figure, pricing number, or version-specific fact must carry
+its citation forward. If the knowledge base contains a URL for a claim, the
+synthesis must include it. Claims without a retrievable source must be
+prefixed with `[unverified]` or `[inference]`.

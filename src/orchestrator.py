@@ -615,7 +615,6 @@ class AutoResearcher:
                 goal=self.config.goal,
                 methodology=self._methodology_summary(),
                 goal_constraints=self._goal_constraints_summary(),
-                lightweight_mode="yes" if self._is_lightweight_mode() else "no",
                 dimension=dimension,
                 findings=findings[:_MAX_FINDINGS_CHARS],
                 knowledge_summary=self._kb_summary(),

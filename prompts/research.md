@@ -37,7 +37,7 @@ architect making real infrastructure decisions.
 4. Identify trade-offs and edge cases, not just feature lists.
 5. Note anything surprising or counter-intuitive.
 6. Flag information that may be outdated or region-specific.
-7. Include explicit source URLs for important factual claims whenever possible.
+7. Every quantitative claim, pricing figure, benchmark result, or version-specific fact MUST include an inline source URL as a markdown link `[source](url)`. Claims without a retrievable source must be prefixed with `[unverified]`.
 8. Mark major conclusions with confidence labels: High confidence, Medium confidence, Low confidence, or Unresolved.
 
 ## Required Output Structure
@@ -49,7 +49,7 @@ Detailed findings for this dimension. Be thorough and specific.
 ### Evidence
 
 Concrete data points: pricing tiers, request limits, latency numbers,
-benchmark results. Cite sources with explicit URLs where possible.
+benchmark results. Each data point must include an inline `[source](url)` link.
 
 ### Trade-offs
 

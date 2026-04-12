@@ -356,7 +356,7 @@ class TestAutoResearcherSetup:
         prompt = captured["prompt"]
         assert "Deliverable Goal" in prompt
         assert "under 100 words" in prompt.lower()
-        assert "lightweight_mode" in prompt
+        assert "lightweight mode" in prompt.lower()
         assert score.quality > 0
 
     def test_postprocess_goal_output_enforces_bullets_and_word_limit(self, researcher):

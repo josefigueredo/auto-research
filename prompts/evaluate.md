@@ -32,10 +32,10 @@ exceptional work.
 
 ## Scoring Criteria
 
-Evaluate findings relative to the requested deliverable. If `lightweight_mode`
-is `yes` or the goal is explicitly short-form, do NOT penalize the findings for
-not resembling a long formal report. Judge whether they are sufficient,
-accurate, and decision-useful for the requested concise format.
+Evaluate findings relative to the requested deliverable. If the goal is
+explicitly short-form (e.g. "bullet-point list", "under 100 words"), do NOT
+penalize the findings for not resembling a long formal report. Judge whether
+they are sufficient, accurate, and decision-useful for the requested format.
 
 - **depth**: How thoroughly was the dimension explored? Did it go beyond
   surface-level feature lists into implementation details, edge cases,
