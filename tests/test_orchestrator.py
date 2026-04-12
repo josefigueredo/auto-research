@@ -116,9 +116,9 @@ class TestRender:
 
 class TestAutoResearcherSetup:
     def test_setup_creates_dirs(self, researcher):
-        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+        with patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher._setup()
         assert researcher.output_dir.exists()
         assert researcher.iterations_dir.exists()
@@ -127,9 +127,9 @@ class TestAutoResearcherSetup:
         assert researcher.methods_path.exists()
 
     def test_setup_writes_tsv_header(self, researcher):
-        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+        with patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher._setup()
         content = researcher.results_path.read_text(encoding="utf-8")
         assert "iteration" in content
@@ -137,9 +137,9 @@ class TestAutoResearcherSetup:
         assert "total_score" in content
 
     def test_setup_writes_run_manifest(self, researcher):
-        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+        with patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher._setup()
         manifest = json.loads(researcher.manifest_path.read_text(encoding="utf-8"))
         assert manifest["run"]["status"] == "initialized"
@@ -147,9 +147,9 @@ class TestAutoResearcherSetup:
         assert manifest["environment"]["git_commit"] == "abc123"
 
     def test_setup_writes_methods_artifact(self, researcher):
-        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+        with patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher._setup()
         methods = researcher.methods_path.read_text(encoding="utf-8")
         assert "# Research Methods" in methods
@@ -196,9 +196,9 @@ class TestAutoResearcherSetup:
                 allowed_tools="",
             ),
         )
-        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+        with patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher._setup()
         researcher.knowledge_base = "word " * 2000
         researcher.results = [
@@ -237,9 +237,9 @@ class TestAutoResearcherSetup:
             ),
         )
         researcher = AutoResearcher(config=cfg, backend=backend, output_dir=tmp_path / "output")
-        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+        with patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher._setup()
         researcher._call_with(backend, "hello")
         assert backend.last_opts is not None
@@ -299,9 +299,9 @@ class TestAutoResearcherSetup:
 
         with patch.object(PlainBackend, "_resolve_executable", return_value="stub"), \
              patch.object(PlainBackend, "_run_process", side_effect=fake_run), \
-             patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+             patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher._setup()
             resp = researcher._call_with(backend, "hello")
 
@@ -389,9 +389,9 @@ class TestAutoResearcherSetup:
             scoring=researcher.config.scoring,
             execution=researcher.config.execution,
         )
-        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+        with patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher._setup()
 
         with patch.object(
@@ -410,9 +410,9 @@ class TestAutoResearcherSetup:
         assert len(baseline.split()) <= 12
 
     def test_finalize_writes_html_report(self, researcher):
-        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+        with patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher._setup()
         synthesis_text = (
             "Recommend Python for orchestration-heavy workloads. "
@@ -442,9 +442,9 @@ class TestAutoResearcherSetup:
             scoring=researcher.config.scoring,
             execution=researcher.config.execution,
         )
-        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+        with patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher._setup()
         synthesis_text = "Recommend Python for orchestration-heavy workloads. High confidence. https://docs.python.org/3/"
         researcher.best_score = 87.0
@@ -498,9 +498,9 @@ class TestAutoResearcherSetup:
         researcher.portfolio_path = researcher.output_dir.parent / "portfolio.json"
         researcher.portfolio_html_path = researcher.output_dir.parent / "portfolio.html"
 
-        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+        with patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher._setup()
         synthesis_text = "Recommend Python for orchestration-heavy workloads. High confidence. https://docs.python.org/3/"
         researcher.best_score = 87.0
@@ -596,9 +596,9 @@ class TestAutoResearcherSetup:
         with patch.object(researcher, "_run_iteration", side_effect=KeyboardInterrupt), \
              patch.object(researcher, "_generate_synthesis"), \
              patch.object(researcher, "_print_summary"), \
-             patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+             patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher.run()
         assert researcher.iteration == 1
         assert researcher.best_score == 74.0
@@ -617,9 +617,9 @@ class TestAutoResearcherSetup:
         with patch.object(researcher, "_run_iteration") as mock_iter, \
              patch.object(researcher, "_generate_synthesis"), \
              patch.object(researcher, "_print_summary"), \
-             patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+             patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher.run()
         mock_iter.assert_not_called()
 
@@ -631,9 +631,9 @@ class TestAutoResearcherSetup:
         with patch.object(researcher, "_run_iteration", side_effect=KeyboardInterrupt), \
              patch.object(researcher, "_generate_synthesis"), \
              patch.object(researcher, "_print_summary"), \
-             patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+             patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher.run()
         metrics = json.loads(researcher.metrics_path.read_text(encoding="utf-8"))
         assert metrics["run_status"] == "interrupted"
@@ -641,9 +641,9 @@ class TestAutoResearcherSetup:
         assert metrics["total_input_tokens"] == 10
 
     def test_finalize_writes_provenance_artifacts(self, researcher):
-        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+        with patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher._setup()
         researcher._collect_provenance(
             "Recommend Python for orchestration-heavy workloads. High confidence. https://docs.python.org/3/",
@@ -677,9 +677,9 @@ class TestAutoResearcherSetup:
             scoring=researcher.config.scoring,
             execution=researcher.config.execution,
         )
-        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+        with patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher._setup()
         researcher.knowledge_base = "Developer experience Iterative knowledge"
         with patch.object(researcher, "_call_with", return_value=AgentResponse(
@@ -713,9 +713,9 @@ class TestAutoResearcherSetup:
             scoring=researcher.config.scoring,
             execution=researcher.config.execution,
         )
-        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+        with patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher._setup()
         researcher.knowledge_base = "Developer experience findings"
         researcher.synthesis_path.write_text(
@@ -746,9 +746,9 @@ class TestAutoResearcherSetup:
             scoring=researcher.config.scoring,
             execution=researcher.config.execution,
         )
-        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+        with patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher._setup()
         researcher.explored_dimensions = ["Cost and pricing", "Operational complexity"]
         researcher.knowledge_base = "Cost and pricing plus operational complexity trade-off and recommendation."
@@ -817,9 +817,9 @@ class TestAutoResearcherSetup:
             scoring=researcher.config.scoring,
             execution=researcher.config.execution,
         )
-        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+        with patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher._setup()
 
         researcher.explored_dimensions = ["Developer experience", "Performance"]
@@ -863,9 +863,9 @@ class TestAutoResearcherSetup:
             scoring=researcher.config.scoring,
             execution=researcher.config.execution,
         )
-        with patch.object(AutoResearcher, "_git_commit", return_value="abc123"), \
-             patch.object(AutoResearcher, "_cli_version", return_value="1.0"), \
-             patch.object(AutoResearcher, "_package_version", return_value="0.2.0"):
+        with patch("src.orchestrator.git_commit", return_value="abc123"), \
+             patch("src.orchestrator.cli_version", return_value="1.0"), \
+             patch("src.orchestrator.package_version", return_value="0.2.0"):
             researcher._setup()
 
         synthesis_text = "Recommend Python. High confidence. https://docs.python.org/3/"

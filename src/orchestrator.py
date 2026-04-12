@@ -8,7 +8,6 @@ headless mode.
 
 from __future__ import annotations
 
-import importlib.metadata
 import json
 import logging
 import subprocess
@@ -19,10 +18,13 @@ from typing import Any
 
 from .backends import CLAUDE_SHORTNAMES, AgentResponse, Backend, CallOptions, get_backends
 from .artifacts import (
+    cli_version,
     dashboard_payload,
     evaluation_payload,
+    git_commit,
     load_json_if_exists,
     metrics_payload,
+    package_version,
     pdf_run_summary_text,
     run_manifest_payload,
     should_write_evaluation,
@@ -864,35 +866,9 @@ class AutoResearcher:
         """Extract explicit deliverable constraints from the goal text."""
         return goal_constraints_summary(self.config.goal, lightweight_mode=self._is_lightweight_mode())
 
-    def _goal_word_limit(self) -> int | None:
-        """Return an explicit 'under N words' constraint when present."""
-        from .constraints import goal_word_limit
-
-        return goal_word_limit(self.config.goal)
-
-    def _goal_requires_bullets(self) -> bool:
-        """Return True when the goal explicitly asks for bullets/list output."""
-        from .constraints import goal_requires_bullets
-
-        return goal_requires_bullets(self.config.goal)
-
     def _postprocess_goal_output(self, text: str) -> str:
         """Deterministically repair short-form outputs to obey explicit goal constraints."""
         return postprocess_goal_output(text, goal=self.config.goal)
-
-    @staticmethod
-    def _trim_to_word_limit(text: str, word_limit: int) -> str:
-        """Trim text while preserving basic bullet structure."""
-        from .constraints import trim_to_word_limit
-
-        return trim_to_word_limit(text, word_limit)
-
-    @staticmethod
-    def _coerce_to_bullets(text: str) -> str:
-        """Convert paragraphs/sentences into compact bullet lines."""
-        from .constraints import coerce_to_bullets
-
-        return coerce_to_bullets(text)
 
     def _synthesis_knowledge_context(self) -> str:
         """Return the knowledge context to send to synthesis."""
@@ -995,9 +971,9 @@ class AutoResearcher:
             run_status=self._run_status,
             run_started_at=self._run_started_at,
             run_completed_at=self._run_completed_at,
-            package_version=self._package_version(),
-            git_commit=self._git_commit(),
-            cli_version_resolver=self._cli_version,
+            package_version=package_version(),
+            git_commit=git_commit(),
+            cli_version_resolver=cli_version,
         )
         self.manifest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -1178,7 +1154,17 @@ class AutoResearcher:
         sections = [
             (
                 "Run Summary",
-                self._pdf_run_summary_text(metrics, rubric, evidence_quality),
+                pdf_run_summary_text(
+                    topic=self.config.topic,
+                    goal=self.config.goal,
+                    strategy=self.config.execution.strategy,
+                    best_score=self.best_score,
+                    iteration=self.iteration,
+                    explored_dimensions=self.explored_dimensions,
+                    metrics=metrics,
+                    rubric=rubric,
+                    evidence_quality=evidence_quality,
+                ),
             ),
             ("Methods", methods_text),
             ("Synthesis", synthesis_text),
@@ -1186,25 +1172,6 @@ class AutoResearcher:
             ("Evaluation", json.dumps(evaluation, indent=2)),
         ]
         self.report_pdf_path.write_bytes(render_simple_pdf(title, sections))
-
-    def _pdf_run_summary_text(
-        self,
-        metrics: dict[str, Any],
-        rubric: dict[str, Any],
-        evidence_quality: dict[str, Any],
-    ) -> str:
-        """Format core run summary text for PDF export."""
-        return pdf_run_summary_text(
-            topic=self.config.topic,
-            goal=self.config.goal,
-            strategy=self.config.execution.strategy,
-            best_score=self.best_score,
-            iteration=self.iteration,
-            explored_dimensions=self.explored_dimensions,
-            metrics=metrics,
-            rubric=rubric,
-            evidence_quality=evidence_quality,
-        )
 
     def _write_dashboard_artifact(self) -> None:
         """Write a stakeholder-friendly summary dashboard artifact."""
@@ -1312,30 +1279,6 @@ class AutoResearcher:
             reference_comparison=reference_comparison,
         )
 
-    def _semantic_weight_profile(
-        self,
-        *,
-        benchmark_summary: dict[str, Any],
-        reference_comparison: dict[str, Any],
-    ) -> tuple[str, dict[str, float]]:
-        """Choose semantic calibration weights based on task shape and available signals."""
-        from .semantic_eval import semantic_weight_profile
-
-        return semantic_weight_profile(
-            goal=self.config.goal,
-            methodology_question=self.config.methodology.question,
-            methodology_scope=self.config.methodology.scope,
-            benchmark_summary=benchmark_summary,
-            reference_comparison=reference_comparison,
-        )
-
-    @staticmethod
-    def _normalize_claim_text(text: str) -> str:
-        """Normalize claim text for crude overlap comparisons."""
-        from .comparison import normalize_claim_text
-
-        return normalize_claim_text(text)
-
     def _reference_run_comparison(self) -> dict[str, Any]:
         """Compare the current run to referenced prior outputs for consistency analysis."""
         return reference_run_comparison(
@@ -1346,22 +1289,6 @@ class AutoResearcher:
             claims=self._claims,
             citations=self._citations,
         )
-
-    def _summarize_strategies(self, successful_runs: list[dict[str, Any]]) -> dict[str, Any]:
-        """Aggregate comparison metrics by strategy, including the current run."""
-        from .comparison import summarize_strategies
-
-        return summarize_strategies(
-            current_strategy=self.config.execution.strategy,
-            current_best_score=self.best_score,
-            successful_runs=successful_runs,
-        )
-
-    def _load_benchmark_definition(self) -> dict[str, Any]:
-        """Load a bundled benchmark definition when ``benchmark_id`` maps to a YAML file."""
-        from .comparison import load_benchmark_definition
-
-        return load_benchmark_definition(self.config.evaluation.benchmark_id)
 
     def _benchmark_summary(self) -> dict[str, Any]:
         """Evaluate current run outputs against optional benchmark expectations."""
@@ -1374,42 +1301,3 @@ class AutoResearcher:
             synthesis_text=synthesis_text,
         )
 
-    @staticmethod
-    def _git_commit() -> str | None:
-        """Return the current git commit SHA if available."""
-        try:
-            result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                return result.stdout.strip()
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-        return None
-
-    @staticmethod
-    def _cli_version(executable: str) -> str | None:
-        """Return a CLI version string when available."""
-        try:
-            result = subprocess.run(
-                [executable, "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                return result.stdout.strip()
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-        return None
-
-    @staticmethod
-    def _package_version() -> str | None:
-        """Return the installed package version if available."""
-        try:
-            return importlib.metadata.version("autoresearch")
-        except importlib.metadata.PackageNotFoundError:
-            return None

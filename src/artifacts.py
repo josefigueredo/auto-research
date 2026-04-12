@@ -1,8 +1,10 @@
-"""Artifact payload builders and filesystem loading helpers."""
+"""Artifact payload builders, filesystem loading, and environment helpers."""
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
+import subprocess
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -230,3 +232,43 @@ def pdf_run_summary_text(
         f"Evidence quality: {evidence_quality.get('average_evidence_quality_score', 0.0)}\n"
         f"Explored dimensions: {', '.join(metrics.get('explored_dimensions', explored_dimensions)) or '(none)'}\n"
     )
+
+
+def git_commit() -> str | None:
+    """Return the current git commit SHA if available."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def cli_version(executable: str) -> str | None:
+    """Return a CLI version string when available."""
+    try:
+        result = subprocess.run(
+            [executable, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def package_version() -> str | None:
+    """Return the installed autoresearch package version if available."""
+    try:
+        return importlib.metadata.version("autoresearch")
+    except importlib.metadata.PackageNotFoundError:
+        return None

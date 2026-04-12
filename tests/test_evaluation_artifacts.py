@@ -79,10 +79,13 @@ def test_semantic_review_can_be_disabled(researcher: AutoResearcher):
     assert result["grade"] == "disabled"
 
 
-def test_strategy_summary_handles_current_and_reference_runs(researcher: AutoResearcher):
-    researcher.best_score = 88.0
-    summary = researcher._summarize_strategies(
-        [
+def test_strategy_summary_handles_current_and_reference_runs():
+    from src.comparison import summarize_strategies
+
+    summary = summarize_strategies(
+        current_strategy="single",
+        current_best_score=88.0,
+        successful_runs=[
             {
                 "strategy": "ensemble",
                 "best_score": 80.0,
@@ -99,27 +102,22 @@ def test_strategy_summary_handles_current_and_reference_runs(researcher: AutoRes
                 "citation_overlap": 0.5,
                 "claim_overlap": 0.65,
             },
-        ]
+        ],
     )
-    assert summary["current_strategy"] == researcher.config.execution.strategy
+    assert summary["current_strategy"] == "single"
     assert summary["best_reference_strategy"] == "ensemble"
     ensemble = next(item for item in summary["strategies"] if item["strategy"] == "ensemble")
     assert ensemble["runs_count"] == 2
     assert ensemble["average_best_score"] == 81.0
 
 
-def test_semantic_weight_profile_adjusts_for_benchmarks_and_references(researcher: AutoResearcher):
-    researcher.config = ResearchConfig(
-        topic=researcher.config.topic,
+def test_semantic_weight_profile_adjusts_for_benchmarks_and_references():
+    from src.semantic_eval import semantic_weight_profile
+
+    profile, weights = semantic_weight_profile(
         goal="Compare and recommend the best option",
-        dimensions=researcher.config.dimensions,
-        methodology=researcher.config.methodology,
-        evaluation=researcher.config.evaluation,
-        reporting=researcher.config.reporting,
-        scoring=researcher.config.scoring,
-        execution=researcher.config.execution,
-    )
-    profile, weights = researcher._semantic_weight_profile(
+        methodology_question="",
+        methodology_scope="",
         benchmark_summary={"expected_dimensions": ["DX"], "required_keywords": ["python"]},
         reference_comparison={"compared_runs_count": 2},
     )
