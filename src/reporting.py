@@ -1,7 +1,13 @@
-"""HTML reporting helpers for autoresearch run artifacts."""
+"""HTML reporting helpers for autoresearch run artifacts.
+
+Renders a standalone HTML report using client-side marked.js for markdown
+and inline JS for collapsible JSON tables.  Raw content is embedded as
+JSON-encoded JS variables, not HTML-escaped ``<pre>`` blocks.
+"""
 
 from __future__ import annotations
 
+import json
 from html import escape
 from pathlib import Path
 from string import Template
@@ -15,6 +21,8 @@ _PRINT_CSS_PATH = _TEMPLATES_DIR / "report_print.css"
 _PARTIALS_DIR = _TEMPLATES_DIR / "partials"
 _HEADER_TEMPLATE_PATH = _PARTIALS_DIR / "report_header.tmpl"
 _JSON_SECTION_TEMPLATE_PATH = _PARTIALS_DIR / "json_section.tmpl"
+
+_SECTION_COUNTER = 0
 
 
 def render_html_report(
@@ -35,6 +43,9 @@ def render_html_report(
     synthesis_text: str,
 ) -> str:
     """Render a standalone HTML report from a filesystem template."""
+    global _SECTION_COUNTER
+    _SECTION_COUNTER = 0
+
     run = manifest.get("run", {})
     strategy = manifest.get("strategy", {})
     summary_cards = {
@@ -69,10 +80,10 @@ def render_html_report(
         completed_at=escape(str(run.get("completed_at", ""))),
         summary_cards_html=_summary_cards_html(summary_cards),
         dimensions_html=_dimensions_html(metrics.get("explored_dimensions", [])),
-        methods_text=escape(methods_text),
-        synthesis_text=escape(synthesis_text),
-        evidence_quality_text=escape(_pretty_json_like(evidence_quality)),
-        rubric_text=escape(_pretty_json_like(rubric)),
+        methods_json=json.dumps(methods_text),
+        synthesis_json=json.dumps(synthesis_text),
+        evidence_quality_json=json.dumps(evidence_quality),
+        rubric_json=json.dumps(rubric),
         semantic_html=_semantic_html(semantic_calibration),
         semantic_review_html=_semantic_review_html(semantic_review),
         dashboard_html=_dashboard_html(dashboard),
@@ -156,7 +167,11 @@ def _json_section_html(
     payload: dict[str, Any],
     meta_rows: list[tuple[str, Any]] | None = None,
 ) -> str:
-    """Render a consistent JSON-like section via the shared partial template."""
+    """Render a JSON section with collapsible table via the shared partial."""
+    global _SECTION_COUNTER
+    _SECTION_COUNTER += 1
+    section_id = f"json-section-{_SECTION_COUNTER}"
+
     template = Template(_JSON_SECTION_TEMPLATE_PATH.read_text(encoding="utf-8"))
     meta_html = "".join(
         f'<p><strong>{escape(str(label))}:</strong> {escape(str(value))}</p>'
@@ -166,24 +181,6 @@ def _json_section_html(
     return template.safe_substitute(
         heading=escape(heading),
         meta_html=meta_html,
-        body_text=escape(_pretty_json_like(payload)),
+        section_id=section_id,
+        body_json=json.dumps(payload),
     )
-
-
-def _pretty_json_like(value: Any, indent: int = 2) -> str:
-    """Format nested dict/list structures without importing json again."""
-    if isinstance(value, dict):
-        lines = ["{"]
-        for idx, (key, item) in enumerate(value.items()):
-            suffix = "," if idx < len(value) - 1 else ""
-            lines.append(" " * indent + f"{key!r}: " + _pretty_json_like(item, indent + 2) + suffix)
-        lines.append(" " * (indent - 2) + "}")
-        return "\n".join(lines)
-    if isinstance(value, list):
-        lines = ["["]
-        for idx, item in enumerate(value):
-            suffix = "," if idx < len(value) - 1 else ""
-            lines.append(" " * indent + _pretty_json_like(item, indent + 2) + suffix)
-        lines.append(" " * (indent - 2) + "]")
-        return "\n".join(lines)
-    return repr(value)

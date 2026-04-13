@@ -1,11 +1,10 @@
-"""Tests for src.reporting — template-based HTML report rendering."""
+"""Tests for src.reporting -- template-based HTML report rendering."""
 
 from src.reporting import (
     _comparison_html,
     _dashboard_html,
     _dimensions_html,
     _evaluation_html,
-    _pretty_json_like,
     _semantic_html,
     _semantic_review_html,
     _summary_cards_html,
@@ -36,20 +35,28 @@ def test_render_html_report_renders_core_sections_and_escapes():
         semantic_calibration={"enabled": True, "grade": "reasonable", "calibrated_score": 0.81},
         semantic_review={"enabled": True, "grade": "good", "overall_score": 0.76, "judge_backend": "claude"},
         dashboard={"current_strategy": "ensemble"},
-        methods_text="Method <1>",
-        synthesis_text="Use <Python> & cite sources.",
+        methods_text="# Method <1>\n\nSome **bold** text.",
+        synthesis_text="Use <Python> & cite [sources](https://example.com).",
     )
 
+    # Title and header escape HTML entities
     assert "Report &lt;Unsafe&gt;" in html
     assert "Topic &amp; Scope" in html
     assert "Goal &gt; Outcome" in html
+    # Core sections present
     assert "Run Summary" in html
     assert "Semantic Calibration" in html
     assert "Semantic Judge Review" in html
     assert "Dashboard Summary" in html
     assert "Consistency Comparison" in html
-    assert "Method &lt;1&gt;" in html
-    assert "Use &lt;Python&gt; &amp; cite sources." in html
+    # Markdown content embedded as JS string, not HTML-escaped in <pre>
+    assert "marked.parse" in html
+    assert "SYNTHESIS_RAW" in html
+    assert "METHODS_RAW" in html
+    # JSON content embedded as JS objects
+    assert "EVIDENCE_QUALITY_DATA" in html
+    assert "RUBRIC_DATA" in html
+    assert "renderJsonTable" in html
 
 
 def test_render_html_report_omits_optional_sections_when_empty():
@@ -93,7 +100,16 @@ def test_helper_html_sections_behave_as_expected():
     assert _semantic_review_html({"enabled": False}) == ""
 
 
-def test_helper_formatters_cover_lists_cards_and_json_like():
+def test_json_sections_use_renderJsonTable():
+    """JSON sections should use JS-based rendering, not <pre> with raw text."""
+    html = _dashboard_html({"current_strategy": "ensemble", "best_score": 80.0})
+    assert "renderJsonTable" in html
+    assert "json-section-" in html
+    # Should NOT have _pretty_json_like output
+    assert "'current_strategy'" not in html
+
+
+def test_helper_formatters_cover_lists_and_cards():
     cards = _summary_cards_html({"A": 1, "B": 2})
     assert cards.count('class="card"') == 2
     assert "A" in cards and "2" in cards
@@ -102,7 +118,3 @@ def test_helper_formatters_cover_lists_cards_and_json_like():
     assert "<li>One</li>" in dims
     assert "<li>Two</li>" in dims
     assert _dimensions_html([]) == "<li>(none)</li>"
-
-    pretty = _pretty_json_like({"a": [1, {"b": "c"}]})
-    assert "'a': [" in pretty
-    assert "'b': 'c'" in pretty

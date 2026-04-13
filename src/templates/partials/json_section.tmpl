@@ -1,5 +1,11 @@
 <section>
   <h2>${heading}</h2>
   ${meta_html}
-  <pre>${body_text}</pre>
+  <div class="json-view" id="${section_id}"></div>
+  <script>
+    (function() {
+      var data = ${body_json};
+      renderJsonTable('${section_id}', data);
+    })();
+  </script>
 </section>
