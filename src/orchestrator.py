@@ -172,6 +172,7 @@ class AutoResearcher:
         self._run_status: str = "initialized"
         self._claims: list[dict[str, Any]] = []
         self._citations: list[dict[str, Any]] = []
+        self._candidate_assessments: list = []
         self._usage = UsageTotals()
         self._backend_workdir: Path | None = None
 
@@ -396,6 +397,7 @@ class AutoResearcher:
             total_output_tokens=self.total_output_tokens,
             iterations_dir=self.iterations_dir,
             results_path=self.results_path,
+            candidate_assessments=self._candidate_assessments,
         )
 
     def _sync_from_loop_state(self, state: "loop_mod.LoopState") -> None:
@@ -408,6 +410,7 @@ class AutoResearcher:
         self.best_scores = state.best_scores
         self.iteration = state.iteration
         self.results = state.results
+        self._candidate_assessments = state.candidate_assessments
 
     def _run_iteration(self) -> None:
         """Execute one full research iteration via the extracted loop module."""
@@ -636,6 +639,7 @@ class AutoResearcher:
                 print(f"    {name}: {tok['input']:,} in / {tok['output']:,} out (${cost:.3f})")
         print(f"  Dimensions:  {len(self.explored_dimensions)} explored")
         self._print_rubric_summary()
+        self._print_agreement_summary()
         print(f"  Results:     {self.results_path}")
         if self.synthesis_path.exists():
             print(f"  Synthesis:   {self.synthesis_path}")
@@ -661,16 +665,47 @@ class AutoResearcher:
         print(f"    contradiction_handling:{dims.get('contradiction_handling', 0):.2f}")
         print()
 
+    def _print_agreement_summary(self) -> None:
+        """Print inter-rater agreement in the completion banner if available."""
+        from .artifacts import load_json_if_exists
+
+        agreement = load_json_if_exists(self.output_dir / "agreement.json", {})
+        if not agreement or agreement.get("dimensions_with_multiple_candidates", 0) == 0:
+            return
+        n = agreement["dimensions_with_multiple_candidates"]
+        rate = agreement.get("decision_agreement_rate")
+        kappa = agreement.get("cohens_kappa")
+        delta = agreement.get("mean_score_delta")
+        parts = [f"{n} dimensions"]
+        if rate is not None:
+            parts.append(f"{rate:.0%} decision agreement")
+        if kappa is not None:
+            parts.append(f"kappa {kappa:.2f}")
+        print(f"  Agreement:   {', '.join(parts)}")
+        if delta is not None:
+            print(f"    mean score delta: {delta:.1f}")
+        print()
+
     def _finalize_run_artifacts(self) -> None:
         """Write final manifest and metrics artifacts."""
         self._run_completed_at = datetime.now(timezone.utc).isoformat()
         self._write_run_manifest()
         self._write_metrics()
+        self._write_agreement_artifact()
         self._write_provenance_artifacts()
         self._write_dashboard_artifact()
         self._write_html_report()
         self._write_pdf_report()
         self._write_portfolio_artifacts()
+
+    def _write_agreement_artifact(self) -> None:
+        """Compute and write inter-rater agreement when multi-candidate data exists."""
+        from .scorer import compute_inter_rater_agreement
+
+        agreement = compute_inter_rater_agreement(self._candidate_assessments)
+        if agreement["dimensions_with_multiple_candidates"] > 0:
+            agreement_path = self.output_dir / "agreement.json"
+            agreement_path.write_text(json.dumps(agreement, indent=2), encoding="utf-8")
 
     def _write_run_manifest(self) -> None:
         """Write a machine-readable manifest for reproducibility."""

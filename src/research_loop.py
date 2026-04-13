@@ -57,6 +57,23 @@ class LoopContext:
 
 
 @dataclass
+class CandidateAssessment:
+    """Score snapshot for one backend's findings on a dimension.
+
+    Collected during multi-candidate selection so inter-rater agreement
+    can be computed after the run.  Without this, per-candidate scores
+    are discarded when the winner is selected.
+    """
+
+    iteration: int
+    dimension: str
+    backend_name: str
+    coverage: float
+    quality: float
+    total: float
+
+
+@dataclass
 class LoopState:
     """Mutable state for the research loop, shared with the orchestrator."""
 
@@ -74,6 +91,7 @@ class LoopState:
     total_output_tokens: int = 0
     iterations_dir: Path = field(default_factory=lambda: Path("iterations"))
     results_path: Path = field(default_factory=lambda: Path("results.tsv"))
+    candidate_assessments: list[CandidateAssessment] = field(default_factory=list)
 
     MAX_ATTEMPTS_PER_DIMENSION: int = 3
     KB_MAX_WORDS: int = 8000
@@ -266,6 +284,11 @@ def _select_candidate_findings(
         selected: list[tuple[ResearchCandidate, IterationScore]] = []
         for candidate in ranked:
             score = _score(ctx, state, dimension, candidate.findings)
+            state.candidate_assessments.append(CandidateAssessment(
+                iteration=state.iteration, dimension=dimension,
+                backend_name=candidate.backend_name,
+                coverage=score.coverage, quality=score.quality, total=score.total,
+            ))
             if score.total >= threshold:
                 selected.append((candidate, score))
         if not selected:
@@ -286,6 +309,11 @@ def _select_candidate_findings(
 
     for candidate in shortlist:
         score = _score(ctx, state, dimension, candidate.findings)
+        state.candidate_assessments.append(CandidateAssessment(
+            iteration=state.iteration, dimension=dimension,
+            backend_name=candidate.backend_name,
+            coverage=score.coverage, quality=score.quality, total=score.total,
+        ))
         if score.total > best_score:
             best_candidate = candidate
             best_score = score.total

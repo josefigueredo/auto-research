@@ -230,6 +230,125 @@ def combine_scores(coverage: float, quality: float) -> float:
 # Helpers
 # ---------------------------------------------------------------------------
 
+_KEEP_THRESHOLD = 30.0
+
+
+def compute_inter_rater_agreement(
+    assessments: list[Any],
+    *,
+    keep_threshold: float = _KEEP_THRESHOLD,
+) -> dict[str, Any]:
+    """Compute inter-rater agreement from multi-candidate assessments.
+
+    Groups assessments by dimension.  For each dimension with 2+ candidates,
+    records the per-backend scores and whether both backends agreed on the
+    keep/discard decision (score >= *keep_threshold*).
+
+    When 2+ dimensions have multi-candidate data, computes Cohen's kappa
+    on the binary keep/discard decisions.
+
+    Args:
+        assessments: List of ``CandidateAssessment`` objects (from
+            ``LoopState.candidate_assessments``).
+        keep_threshold: Score at or above which findings are considered
+            "keep".  Matches the threshold in ``run_iteration``.
+
+    Returns:
+        Agreement summary dict.  Empty ``per_dimension`` list when no
+        multi-candidate data exists.
+    """
+    from collections import defaultdict
+
+    by_dim: dict[str, list[Any]] = defaultdict(list)
+    for a in assessments:
+        by_dim[a.dimension].append(a)
+
+    per_dimension: list[dict[str, Any]] = []
+    for dim, items in by_dim.items():
+        if len(items) < 2:
+            continue
+        entries = [
+            {"backend": a.backend_name, "coverage": a.coverage, "quality": a.quality, "total": a.total}
+            for a in items
+        ]
+        decisions = [a.total >= keep_threshold for a in items]
+        per_dimension.append({
+            "dimension": dim,
+            "assessments": entries,
+            "decision_agreed": len(set(decisions)) == 1,
+        })
+
+    n_dims = len(per_dimension)
+    if n_dims == 0:
+        return {
+            "dimensions_with_multiple_candidates": 0,
+            "decision_agreement_rate": None,
+            "cohens_kappa": None,
+            "mean_score_delta": None,
+            "per_dimension": [],
+        }
+
+    agreed = sum(1 for d in per_dimension if d["decision_agreed"])
+    agreement_rate = round(agreed / n_dims, 2)
+
+    deltas = []
+    for d in per_dimension:
+        scores = [a["total"] for a in d["assessments"]]
+        deltas.append(max(scores) - min(scores))
+    mean_delta = round(sum(deltas) / len(deltas), 1) if deltas else 0.0
+
+    kappa = _cohens_kappa(per_dimension, keep_threshold) if n_dims >= 2 else None
+
+    return {
+        "dimensions_with_multiple_candidates": n_dims,
+        "decision_agreement_rate": agreement_rate,
+        "cohens_kappa": kappa,
+        "mean_score_delta": mean_delta,
+        "per_dimension": per_dimension,
+    }
+
+
+def _cohens_kappa(
+    per_dimension: list[dict[str, Any]],
+    keep_threshold: float,
+) -> float | None:
+    """Compute Cohen's kappa on binary keep/discard decisions.
+
+    Uses the first two assessments per dimension as rater A and rater B.
+    Returns None if there are fewer than 2 dimensions or if the expected
+    agreement is 1.0 (all same category → kappa undefined).
+    """
+    if len(per_dimension) < 2:
+        return None
+
+    # Build 2x2 contingency: (raterA_keep, raterB_keep)
+    a_b = {"kk": 0, "kd": 0, "dk": 0, "dd": 0}
+    for d in per_dimension:
+        items = d["assessments"]
+        a_keep = items[0]["total"] >= keep_threshold
+        b_keep = items[1]["total"] >= keep_threshold
+        if a_keep and b_keep:
+            a_b["kk"] += 1
+        elif a_keep and not b_keep:
+            a_b["kd"] += 1
+        elif not a_keep and b_keep:
+            a_b["dk"] += 1
+        else:
+            a_b["dd"] += 1
+
+    n = sum(a_b.values())
+    if n == 0:
+        return None
+    p_o = (a_b["kk"] + a_b["dd"]) / n  # observed agreement
+    p_a_keep = (a_b["kk"] + a_b["kd"]) / n
+    p_b_keep = (a_b["kk"] + a_b["dk"]) / n
+    p_e = p_a_keep * p_b_keep + (1 - p_a_keep) * (1 - p_b_keep)  # expected by chance
+
+    if p_e >= 1.0:
+        return None  # degenerate: all same category
+    return round((p_o - p_e) / (1.0 - p_e), 2)
+
+
 def _fuzzy_match(dimension: str, text: str) -> bool:
     """Check if key terms from a dimension label appear in the text.
 
