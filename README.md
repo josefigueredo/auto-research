@@ -9,6 +9,25 @@ Supports **Claude**, **Codex**, **Gemini**, and **Copilot** backends with
 **multi-backend strategies**: ensemble research, adversarial review, serial
 refinement, and specialist routing.
 
+## What This System Is
+
+A **methodologically-aware autonomous research system** -- not a fully
+validated scientific research engine.
+
+- Autonomously explores topics across dimensions, accumulates findings,
+  compares iterations, and synthesizes a deliverable
+- Includes structured rigor: methodology fields, provenance artifacts,
+  evaluation layers, inter-rater agreement metrics, and reproducibility metadata
+- Still relies on heuristic extraction, LLM judges, and benchmark logic
+  that do **not** make its conclusions scientifically true by default
+
+| Question | Answer |
+|----------|--------|
+| Autonomous agent research system? | Yes |
+| Professional research workflow? | Yes |
+| Full scientific rigor? | Not yet (see [roadmap](docs/design/scientific-rigor-roadmap.md)) |
+| Useful and serious? | Yes |
+
 ## Quick Start
 
 ```bash
@@ -136,8 +155,15 @@ flowchart LR
 
 After synthesis, a **rubric** grades the output on citation coverage, evidence
 quality, source diversity, uncertainty reporting, actionability, and
-contradiction handling. The rubric grade is displayed in the CLI completion
-banner alongside the run metrics.
+contradiction handling.
+
+When ensemble or parallel strategies produce multiple candidates for the same
+dimension, **inter-rater agreement** (Cohen's kappa) is computed across
+backends -- quantifying whether independent review is adding real value or
+just cost.
+
+Both the rubric grade and agreement metrics are displayed in the CLI
+completion banner alongside the run metrics.
 
 ## Multi-Backend Strategies
 
@@ -209,6 +235,12 @@ Each run produces a directory under `output/<config-name>/`:
 | `rubric.json` | Research quality rubric (grade + 6 dimensions) |
 | `contradictions.json` | Detected recommendation conflicts |
 
+**Agreement artifacts** (multi-backend runs only):
+
+| File | Description |
+|------|-------------|
+| `agreement.json` | Inter-rater agreement: per-dimension scores, decision agreement rate, Cohen's kappa |
+
 **Evaluation artifacts** (when configured):
 
 | File | Description |
@@ -261,7 +293,7 @@ src/
     config.py           YAML config loader
     orchestrator.py     AutoResearcher -- setup, synthesis, artifact wiring
     research_loop.py    Core iteration loop (hypothesis -> research -> score -> decide)
-    scorer.py           Heuristic scoring + LLM-as-judge
+    scorer.py           Heuristic scoring, LLM-as-judge, inter-rater agreement
     strategy.py         Multi-backend strategies
     provenance.py       Claim/citation extraction, evidence linking, rubric
     comparison.py       Benchmark/reference-run comparison
@@ -289,7 +321,7 @@ configs/
 prompts/                Prompt templates for each phase
 benchmarks/             Reusable benchmark definitions
 docs/design/            Architecture decision records
-tests/                  275 tests across all modules
+tests/                  283 tests across all modules
 ```
 
 ## Resilience
@@ -322,6 +354,7 @@ uv run pytest tests/ -v
 ## Design Documents
 
 - `docs/design/evaluation-architecture.md` -- evaluation pipeline rationale, module boundaries, data flow
+- `docs/design/scientific-rigor-roadmap.md` -- PRISMA/GRADE-informed roadmap toward scientific rigor
 
 ## Related Projects
 
