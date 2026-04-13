@@ -1,0 +1,7 @@
+# Source documents go here
+
+Drop PDFs, markdown, text, HTML, or any source material into this directory.
+Never modify these files — Claude treats them as immutable inputs.
+
+When you add a new source, ask Claude to "ingest it" and it will create
+or update the relevant wiki pages.
