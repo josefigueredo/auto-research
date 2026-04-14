@@ -8,81 +8,111 @@ with production-grade enhancements.
 
 ```
 llm-wiki-claude/
-    CLAUDE.md                    -- prompt: how Claude maintains the wiki
-    ENHANCEMENTS.md              -- 6-phase production roadmap
-    README.md                    -- this file
-    raw/                         -- source documents (you add these)
-    wiki/                        -- markdown pages Claude maintains
-        index.md                 -- table of contents
-        log.md                   -- structured operation log
-        _quality.md              -- quality dashboard
-        _quality-history.jsonl   -- metric history for trend tracking
+    CLAUDE.md                     -- prompt: how Claude maintains the wiki
+    ENHANCEMENTS.md               -- 6-phase roadmap (context + rationale)
+    README.md                     -- this file
+    .gitignore                    -- excludes rebuildable artifacts
+    raw/                          -- source documents (you add these)
+    wiki/                         -- markdown pages Claude maintains
+        index.md                  -- table of contents
+        log.md                    -- structured operation log
+        _quality.md               -- quality dashboard
+        _quality-history.jsonl    -- metric history for trend tracking
+        _tags.md                  -- tag → pages index
+        _pending-reviews.md       -- proposed changes awaiting approval
+        _access.md                -- ownership and access policy
+        _operations.jsonl         -- machine-readable op log
+        _costs.md                 -- cumulative token/cost summary
+        _schedule.md              -- recommended maintenance schedule
+        _drafts/                  -- staged changes pending review
+    docs/                         -- setup references for code items
+        embedding-index.md        -- semantic search with sqlite-vec
+        export-formats.md         -- single-doc / HTML / PDF exports
+        import-adapters.md        -- Notion / Confluence / Slack / GH
+        hooks.md                  -- Slack / GitHub / post-op hooks
 ```
 
 ## Quick start
 
-1. **Point Claude Code at this directory**: `cd llm-wiki-claude` then open
-   Claude Code. It will read `CLAUDE.md` automatically.
+1. **Point Claude Code at this directory**: `cd llm-wiki-claude` then
+   open Claude Code. It will read `CLAUDE.md` automatically.
 
 2. **Drop a source** into `raw/` (PDF, markdown, text, HTML — anything).
 
-3. **Ask Claude to ingest it**: "ingest raw/<filename>". Claude will
-   discuss key takeaways, create summary + concept pages, update the
-   index, and log a structured entry.
+3. **Ask Claude to ingest it**: "ingest raw/<filename>".
 
-4. **Ask questions**: Claude reads the index first, cites wiki pages in
-   answers, and does external lookups when the wiki falls short (marked
-   `[external]`).
+4. **Ask questions**: Claude reads the index, uses the embedding index
+   if available, and falls back to external search when the wiki is
+   incomplete. Answers carry `[wiki]` / `[external]` provenance tags.
 
 5. **Periodically lint**: "lint the wiki". Produces `_quality.md` with
    metrics, trends, and specific remediation suggestions.
 
 ## What's different from the original pattern
 
-Three top-priority enhancements already baked into `CLAUDE.md`:
+The full 6-phase roadmap (`ENHANCEMENTS.md`) is implemented through:
 
-### 1. Structured operation log
+### Governance
+- **Page ownership** (`Owner:` field) — human-owned pages go through
+  a review queue before edits are applied
+- **Review queue** (`wiki/_pending-reviews.md`) — structured review
+  workflow with approve/reject decisions
+- **Access policy** (`wiki/_access.md`) — per-page or per-directory
+  locks and ownership overrides
+- **Branch-based edits** — large ingests (>10 pages) propose a Git
+  branch for atomic review before merging
+- **Post-ingest review rotation** — Claude surfaces 3-5 low-confidence
+  claims for human verification after every ingest
 
-Every operation writes a machine-parseable entry with operation type,
-initiator, pages touched, token usage, cost estimate, and duration. No
-free-form prose — enables auditing, cost tracking, and replay.
+### Scale
+- **Hierarchical directories** — `wiki/concepts/`, `wiki/topics/<topic>/`,
+  `wiki/sources/` — proposed automatically beyond ~50 pages
+- **Tag-based navigation** (`wiki/_tags.md`) — cross-cutting index
+  regenerated during lint
+- **Embedding index** (`docs/embedding-index.md`) — optional local
+  semantic search via sqlite-vec when page count exceeds ~200
 
-### 2. Quality dashboard with trend history
+### Quality assurance
+- **Quality dashboard with trend history** (`_quality.md` +
+  `_quality-history.jsonl`) — current vs. previous metrics, grade
+  (strong/good/developing/insufficient), specific remediation
+- **Automated consistency checks** — cross-reference validation,
+  completeness check against raw sources, link reciprocity, tag
+  variants detection
 
-Lint produces `_quality.md` showing current vs. previous metrics (pages,
-orphans, unverified claims, source coverage, link density, staleness) and
-a trend column. Each lint appends to `_quality-history.jsonl` so trends
-can be computed across arbitrary time ranges.
+### Observability
+- **Structured log** (`log.md` + `_operations.jsonl`) — every
+  operation logs type, initiator, pages touched, token usage, cost,
+  duration. Machine-readable JSONL enables replay and trend analysis
+- **Cost budgets** (`_costs.md`) — default per-op/daily/weekly caps,
+  confirmation prompts on large operations
+- **Error tracking** — failed operations log `Operation: failed-<type>`
+  with which pages succeeded before the failure
 
-A calibrated grade (strong / good / developing / insufficient) summarizes
-wiki health in one label.
+### Integration
+- **Scheduled maintenance** (`_schedule.md`) — recommended cadence
+  for lint / staleness sweep / quality report with example
+  Claude Code `/schedule` and cron configs
+- **Hooks** (`docs/hooks.md`) — post-ingest Slack notifications,
+  post-lint GitHub issues on regression, coverage-gap logging
+- **Export formats** (`docs/export-formats.md`) — single-doc markdown,
+  MkDocs static site, PDF via pandoc, JSON dump
+- **Import adapters** (`docs/import-adapters.md`) — Notion, Confluence,
+  Google Docs, Slack threads, GitHub issues, web pages
 
-### 3. Dual-path question answering
-
-When you ask a question, Claude routes based on confidence:
-- **Fully grounded in stable wiki pages** → wiki-only answer, `[wiki]` tagged
-- **Partial or volatile** → wiki answer + external fresh lookup, both tagged
-- **Not in wiki** → offers to search externally and ingest the result
-
-Answers carry explicit provenance tags so you always know whether a claim
-came from your curated wiki or a fresh external source.
-
-Volatile pages (marked `**Freshness**: volatile` in the page format) always
-trigger an external confirmation lookup, even if the wiki has an answer.
-This closes the pricing/API-version/release-date staleness gap.
-
-## Roadmap
-
-See [ENHANCEMENTS.md](ENHANCEMENTS.md) for the full 6-phase production
-enhancement plan. The three above are Phase 1. Next up:
-
-- Page ownership and review queue (Phase 1.1)
-- Hierarchical directory structure (Phase 2.1)
-- Embedding index for larger corpora (Phase 6.2)
+### Hybrid retrieval
+- **Dual-path question answering** — routes by confidence: wiki-only
+  for grounded stable pages, hybrid for volatile/partial, external-only
+  with ingestion offer when not in wiki
+- **Freshness signals** — `Freshness: volatile` pages always trigger
+  external confirmation even when the wiki has an answer
+- **Embedding index** — semantic search complements keyword grep for
+  larger corpora
 
 ## Design references
 
 - [Karpathy's LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
   — the original one-page pattern
 - [autoresearch assessment](../output/karpathy_llm_wiki/synthesis.md)
-  — decision-ready analysis of the gist that informed the enhancements
+  — decision-ready analysis of the gist that informed these enhancements
+- [`ENHANCEMENTS.md`](ENHANCEMENTS.md) — the full production roadmap

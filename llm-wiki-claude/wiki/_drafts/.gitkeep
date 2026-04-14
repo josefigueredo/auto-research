@@ -1,0 +1,8 @@
+# Review Drafts
+
+Claude stages proposed changes here when the target page has a human
+owner. The owner reviews the draft, then Claude either applies it or
+discards it based on the decision logged in `wiki/_pending-reviews.md`.
+
+Files in this directory are ephemeral — they are removed once the
+review decision is logged.
