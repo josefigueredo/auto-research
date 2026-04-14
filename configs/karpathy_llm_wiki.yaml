@@ -1,0 +1,96 @@
+# Research on Andrej Karpathy's LLM Wiki
+# Source: https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f
+#
+# The LLM Wiki is a curated knowledge base covering the modern LLM stack:
+# training, inference, fine-tuning, tooling, deployment, safety, and the
+# broader ecosystem.  This config researches what it covers, what it
+# misses, how it compares to other references, and who should use it.
+
+research:
+  topic: >
+    Analyze Andrej Karpathy's LLM Wiki — a curated knowledge base covering
+    the modern LLM technology stack.  The wiki source is at
+    https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f
+    Investigate its structure, coverage, accuracy, gaps, and practical
+    usefulness as a reference for engineers working with LLMs.
+  goal: >
+    A decision-ready assessment for an ML engineer or team lead who is
+    considering adopting the LLM Wiki as their primary reference.  The
+    deliverable should include: a coverage analysis (what topics are well
+    covered vs. missing), an accuracy spot-check on key claims, a comparison
+    against alternative references (Hugging Face docs, LLM course repos,
+    Chip Huyen's MLOps material, official provider docs), identified gaps
+    and blind spots, and a clear recommendation on when/how to use it.
+
+  dimensions:
+    - "Structure and organization — how is the wiki laid out, what sections exist, is it navigable?"
+    - "Training coverage — pre-training, fine-tuning (SFT, RLHF, DPO), data curation, scaling laws"
+    - "Inference and deployment — quantization, serving (vLLM, TGI, SGLang), latency, cost"
+    - "Tooling ecosystem — prompt engineering, RAG, agents, function calling, eval frameworks"
+    - "Safety and alignment — RLHF, constitutional AI, red-teaming, guardrails"
+    - "Accuracy and freshness — spot-check claims against primary sources, identify outdated info"
+    - "Gaps and blind spots — what important LLM topics are missing or underrepresented?"
+    - "Comparison with alternatives — how does it compare to HuggingFace docs, Chip Huyen, LLM courses?"
+    - "Practical usefulness — for whom is this most valuable, and when should they look elsewhere?"
+
+  methodology:
+    question: >
+      Is Karpathy's LLM Wiki a reliable and comprehensive reference for
+      engineers working with LLMs, and what are its strengths and limitations
+      compared to alternatives?
+    scope: >
+      ML engineers, AI team leads, and developers building LLM-powered
+      applications.  Focus on practical engineering utility, not academic
+      completeness.
+    inclusion_criteria:
+      - primary source content from the wiki itself
+      - official documentation from referenced tools/frameworks
+      - published benchmarks and papers cited in the wiki
+      - alternative reference materials for comparison
+    exclusion_criteria:
+      - opinion pieces without technical substance
+      - promotional content from LLM vendors
+    preferred_source_types:
+      - the wiki gist itself
+      - official framework docs (HuggingFace, vLLM, OpenAI, Anthropic)
+      - peer-reviewed papers or arxiv preprints
+      - established ML engineering blogs (Chip Huyen, Lilian Weng, Jay Alammar)
+    recency_days: 90
+
+  evaluation:
+    run_baselines: true
+    semantic_review: true
+    semantic_calibration: true
+
+  reporting:
+    export_html: true
+    report_title: "Karpathy LLM Wiki — Coverage and Accuracy Assessment"
+
+  scoring:
+    min_dimensions_per_iteration: 1
+    target_dimensions_total: 9
+    evidence_types:
+      - comparison_table
+      - code_example
+      - trade_off_analysis
+
+  execution:
+    max_iterations: 12
+    compress_every: 4
+    allowed_tools: "WebSearch,WebFetch,Read,Bash,Glob,Grep"
+    max_turns: 8
+    backend: claude
+    model: sonnet
+    max_budget_per_call: 2.00
+    timeout_seconds: 600
+
+    strategy: adversarial
+    backends:
+      primary: claude
+      research:
+        - codex
+        - claude
+      judge: codex
+      utility: codex
+    strategy_config:
+      critique_depth: thorough
