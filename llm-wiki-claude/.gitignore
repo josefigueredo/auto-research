@@ -1,9 +1,0 @@
-# Embedding index (rebuildable from wiki source)
-wiki/_embeddings.sqlite
-wiki/_embeddings/
-
-# Exports
-wiki-export.md
-wiki-export.pdf
-wiki-export.json
-site/
